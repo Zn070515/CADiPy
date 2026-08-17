@@ -25,6 +25,11 @@ def test_parameter_and_postcondition_specs_are_immutable() -> None:
         postcondition.required = False  # type: ignore[misc]
 
 
+def test_param_spec_rejects_string_type_values() -> None:
+    with pytest.raises(TypeError):
+        ParamSpec(type="number")  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
 def test_finite_number_rejects_non_finite_values(value: float) -> None:
     spec = ParamSpec(type=ParamType.NUMBER, required=True, finite=True)

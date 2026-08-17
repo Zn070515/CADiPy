@@ -39,9 +39,7 @@ class ParamSpec:
 
     def __post_init__(self) -> None:
         if not isinstance(self.type, ParamType):
-            object.__setattr__(self, "type", ParamType(self.type))
-        if self.choices is not None and not isinstance(self.choices, frozenset):
-            object.__setattr__(self, "choices", frozenset(self.choices))
+            raise TypeError("ParamSpec.type must be a ParamType")
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
