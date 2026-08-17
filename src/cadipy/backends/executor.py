@@ -10,6 +10,17 @@ from cadipy.domain.documents import DocumentType
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from cadipy.domain.sketches import (
+        DimensionHandle,
+        DimensionInspection,
+        DimensionType,
+        RelationHandle,
+        RelationType,
+        SketchEntityHandle,
+        SketchEntityInspection,
+        SketchInspection,
+    )
+
 
 @dataclass(frozen=True, slots=True)
 class ApplicationInfo:
@@ -38,6 +49,7 @@ class SketchHandle:
     document_id: str
     name: str
     plane: str
+    persistent_ref: str | None = None
 
     kind = "sketch"
 
@@ -124,6 +136,96 @@ class SolidWorksExecutor(Protocol):
     def create_part(self) -> DocumentHandle: ...
 
     def create_sketch(self, document: DocumentHandle, plane: str) -> SketchHandle: ...
+
+    def list_sketches(self, document: DocumentHandle) -> tuple[SketchHandle, ...]: ...
+
+    def inspect_sketch(
+        self, document: DocumentHandle, sketch: SketchHandle
+    ) -> SketchInspection: ...
+
+    def add_line(
+        self,
+        document: DocumentHandle,
+        sketch: SketchHandle,
+        start_x_mm: float,
+        start_y_mm: float,
+        end_x_mm: float,
+        end_y_mm: float,
+    ) -> SketchEntityHandle: ...
+
+    def add_sketch_rectangle(
+        self,
+        document: DocumentHandle,
+        sketch: SketchHandle,
+        width_mm: float,
+        height_mm: float,
+        origin_x_mm: float = 0.0,
+        origin_y_mm: float = 0.0,
+    ) -> tuple[SketchEntityHandle, ...]: ...
+
+    def add_circle(
+        self,
+        document: DocumentHandle,
+        sketch: SketchHandle,
+        center_x_mm: float,
+        center_y_mm: float,
+        radius_mm: float,
+    ) -> SketchEntityHandle: ...
+
+    def add_arc(
+        self,
+        document: DocumentHandle,
+        sketch: SketchHandle,
+        center_x_mm: float,
+        center_y_mm: float,
+        start_x_mm: float,
+        start_y_mm: float,
+        end_x_mm: float,
+        end_y_mm: float,
+        direction: int = 1,
+    ) -> SketchEntityHandle: ...
+
+    def add_relation(
+        self,
+        document: DocumentHandle,
+        sketch: SketchHandle,
+        relation_type: RelationType,
+        entities: tuple[SketchEntityHandle, ...],
+        anchor_origin: bool = False,
+    ) -> RelationHandle: ...
+
+    def add_dimension(
+        self,
+        document: DocumentHandle,
+        sketch: SketchHandle,
+        dimension_type: DimensionType,
+        entities: tuple[SketchEntityHandle, ...],
+        value_mm: float,
+        position_x_mm: float,
+        position_y_mm: float,
+    ) -> DimensionHandle: ...
+
+    def set_dimension(
+        self,
+        document: DocumentHandle,
+        sketch: SketchHandle,
+        dimension: DimensionHandle,
+        value_mm: float,
+    ) -> DimensionHandle: ...
+
+    def inspect_entity(
+        self,
+        document: DocumentHandle,
+        sketch: SketchHandle,
+        entity: SketchEntityHandle,
+    ) -> SketchEntityInspection: ...
+
+    def inspect_dimension(
+        self,
+        document: DocumentHandle,
+        sketch: SketchHandle,
+        dimension: DimensionHandle,
+    ) -> DimensionInspection: ...
 
     def add_rectangle(
         self,

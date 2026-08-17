@@ -20,6 +20,17 @@ from cadipy.backends.executor import (
 )
 from cadipy.domain.documents import DocumentType
 from cadipy.domain.errors import InvalidArgumentError, ProtocolError, TargetNotFoundError
+from cadipy.domain.sketches import (
+    DimensionHandle,
+    DimensionInspection,
+    DimensionType,
+    RelationHandle,
+    RelationType,
+    SketchEntityHandle,
+    SketchEntityInspection,
+    SketchEntityType,
+    SketchInspection,
+)
 from cadipy.operations.dispatch import OperationDispatcher
 
 
@@ -121,6 +132,15 @@ def test_dispatcher_rejects_unknown_or_malformed_operations() -> None:
                 "params": {"width_mm": 100.0, "height_mm": 60.0},
             }
         )
+    with pytest.raises(InvalidArgumentError):
+        dispatcher.dispatch(
+            {
+                "id": "request-1",
+                "operation": "sketch.add_relation",
+                "target": {"document_id": "doc-1"},
+                "params": {"anchor_origin": "yes"},
+            }
+        )
 
 
 def test_mutating_existing_document_operation_requires_target_before_backend_call() -> None:
@@ -174,6 +194,200 @@ def test_document_open_rejects_unknown_document_type_as_domain_error() -> None:
                 "operation": "document.open",
                 "params": {"path": "PartA.SLDPRT", "document_type": "surface"},
             }
+        )
+
+
+def test_dispatcher_exposes_composable_sketch_contracts_from_one_registry() -> None:
+    executor = SketchFakeExecutor()
+    document = DocumentHandle("doc-a", DocumentType.PART, "PartA")
+    dispatcher = OperationDispatcher(executor, target_resolver=lambda binding: document)
+    target = {"document_id": document.id}
+    sketch_value = {
+        "id": "sketch-1",
+        "document_id": document.id,
+        "name": "Sketch1",
+        "plane": "Front Plane",
+    }
+    entity_value = {
+        "id": "entity-1",
+        "document_id": document.id,
+        "sketch_id": "sketch-1",
+        "entity_type": "line",
+        "persistent_ref": "AQ==",
+        "start_x_mm": 0.0,
+        "start_y_mm": 0.0,
+        "end_x_mm": 100.0,
+        "end_y_mm": 0.0,
+    }
+    dimension_value = {
+        "id": "dimension-1",
+        "sketch_id": "sketch-1",
+        "dimension_type": "horizontal_distance",
+        "name": "D1@Sketch1",
+        "value_mm": 100.0,
+    }
+
+    assert dispatcher.dispatch(
+        {
+            "operation": "sketch.create",
+            "target": target,
+            "params": {"plane": "Front Plane"},
+        }
+    ).ok
+    assert dispatcher.dispatch({"operation": "sketch.list", "target": target, "params": {}}).ok
+    assert dispatcher.dispatch(
+        {"operation": "sketch.inspect", "target": target, "params": {"sketch": sketch_value}}
+    ).ok
+    assert dispatcher.dispatch(
+        {
+            "operation": "sketch.add_line",
+            "target": target,
+            "params": {
+                "sketch": sketch_value,
+                "start_x_mm": 0.0,
+                "start_y_mm": 0.0,
+                "end_x_mm": 100.0,
+                "end_y_mm": 0.0,
+            },
+        }
+    ).ok
+    assert dispatcher.dispatch(
+        {
+            "operation": "sketch.add_rectangle",
+            "target": target,
+            "params": {"sketch": sketch_value, "width_mm": 100.0, "height_mm": 60.0},
+        }
+    ).ok
+    assert dispatcher.dispatch(
+        {
+            "operation": "sketch.add_circle",
+            "target": target,
+            "params": {
+                "sketch": sketch_value,
+                "center_x_mm": 0.0,
+                "center_y_mm": 0.0,
+                "radius_mm": 5.0,
+            },
+        }
+    ).ok
+    assert dispatcher.dispatch(
+        {
+            "operation": "sketch.add_arc",
+            "target": target,
+            "params": {
+                "sketch": sketch_value,
+                "center_x_mm": 0.0,
+                "center_y_mm": 0.0,
+                "start_x_mm": 5.0,
+                "start_y_mm": 0.0,
+                "end_x_mm": 0.0,
+                "end_y_mm": 5.0,
+            },
+        }
+    ).ok
+    assert dispatcher.dispatch(
+        {
+            "operation": "sketch.add_relation",
+            "target": target,
+            "params": {
+                "sketch": sketch_value,
+                "relation_type": "horizontal",
+                "entities": [entity_value],
+            },
+        }
+    ).ok
+    assert dispatcher.dispatch(
+        {
+            "operation": "sketch.add_dimension",
+            "target": target,
+            "params": {
+                "sketch": sketch_value,
+                "dimension_type": "horizontal_distance",
+                "entities": [entity_value],
+                "value_mm": 100.0,
+                "position_x_mm": 50.0,
+                "position_y_mm": -10.0,
+            },
+        }
+    ).ok
+    assert dispatcher.dispatch(
+        {
+            "operation": "sketch.set_dimension",
+            "target": target,
+            "params": {"sketch": sketch_value, "dimension": dimension_value, "value_mm": 120.0},
+        }
+    ).ok
+    assert dispatcher.dispatch(
+        {
+            "operation": "sketch.inspect_entity",
+            "target": target,
+            "params": {"sketch": sketch_value, "entity": entity_value},
+        }
+    ).ok
+    assert dispatcher.dispatch(
+        {
+            "operation": "sketch.inspect_dimension",
+            "target": target,
+            "params": {"sketch": sketch_value, "dimension": dimension_value},
+        }
+    ).ok
+
+
+class SketchFakeExecutor(FakeExecutor):
+    def list_sketches(self, document: DocumentHandle) -> tuple[SketchHandle, ...]:
+        return (SketchHandle("sketch-1", document.id, "Sketch1", "Front Plane"),)
+
+    def inspect_sketch(self, document: DocumentHandle, sketch: SketchHandle) -> SketchInspection:
+        return SketchInspection(sketch.id, sketch.name, sketch.plane, 4, 4, 2, False)
+
+    def add_line(self, *args: object) -> SketchEntityHandle:
+        return self._entity()
+
+    def add_sketch_rectangle(self, *args: object) -> tuple[SketchEntityHandle, ...]:
+        return (self._entity(),) * 4
+
+    def add_circle(self, *args: object) -> SketchEntityHandle:
+        return self._entity(SketchEntityType.CIRCLE)
+
+    def add_arc(self, *args: object) -> SketchEntityHandle:
+        return self._entity(SketchEntityType.ARC)
+
+    def add_relation(self, *args: object, **kwargs: object) -> RelationHandle:
+        return RelationHandle("relation-1", "sketch-1", RelationType.HORIZONTAL, ("entity-1",))
+
+    def add_dimension(self, *args: object) -> DimensionHandle:
+        return DimensionHandle(
+            "dimension-1", "sketch-1", DimensionType.HORIZONTAL_DISTANCE, "D1@Sketch1", 100.0
+        )
+
+    def set_dimension(self, *args: object) -> DimensionHandle:
+        return DimensionHandle(
+            "dimension-1", "sketch-1", DimensionType.HORIZONTAL_DISTANCE, "D1@Sketch1", 120.0
+        )
+
+    def inspect_entity(self, *args: object) -> SketchEntityInspection:
+        return SketchEntityInspection(self._entity(), SketchEntityType.LINE, 1)
+
+    def inspect_dimension(self, *args: object) -> DimensionInspection:
+        return DimensionInspection(
+            DimensionHandle(
+                "dimension-1", "sketch-1", DimensionType.HORIZONTAL_DISTANCE, "D1@Sketch1", 100.0
+            ),
+            100.0,
+        )
+
+    @staticmethod
+    def _entity(entity_type: SketchEntityType = SketchEntityType.LINE) -> SketchEntityHandle:
+        return SketchEntityHandle(
+            "entity-1",
+            "doc-a",
+            "sketch-1",
+            entity_type,
+            "AQ==",
+            start_x_mm=0.0,
+            start_y_mm=0.0,
+            end_x_mm=100.0,
+            end_y_mm=0.0,
         )
 
 

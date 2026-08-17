@@ -9,9 +9,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from cadipy.audit.events import AuditEvent
-from cadipy.backends.executor import DocumentHandle, SolidWorksExecutor
+from cadipy.backends.executor import DocumentHandle, SketchHandle, SolidWorksExecutor
 from cadipy.domain.documents import DocumentType
 from cadipy.domain.errors import InvalidArgumentError, ProtocolError, TargetNotFoundError
+from cadipy.domain.sketches import (
+    DimensionHandle,
+    DimensionType,
+    RelationType,
+    SketchEntityHandle,
+    SketchEntityType,
+)
 from cadipy.domain.targets import TargetBinding
 from cadipy.protocol.result import OperationResult
 from cadipy.verification.postconditions import verify_rectangular_extrusion
@@ -105,6 +112,30 @@ class OperationDispatcher:
                     operation=spec.name,
                     details={"parameter": name},
                 )
+            if type_name == "integer" and (isinstance(value, bool) or not isinstance(value, int)):
+                raise InvalidArgumentError(
+                    f"parameter {name} must be an integer",
+                    operation=spec.name,
+                    details={"parameter": name},
+                )
+            if type_name == "object" and not isinstance(value, Mapping):
+                raise InvalidArgumentError(
+                    f"parameter {name} must be an object",
+                    operation=spec.name,
+                    details={"parameter": name},
+                )
+            if type_name == "array" and not isinstance(value, (list, tuple)):
+                raise InvalidArgumentError(
+                    f"parameter {name} must be an array",
+                    operation=spec.name,
+                    details={"parameter": name},
+                )
+            if type_name == "boolean" and not isinstance(value, bool):
+                raise InvalidArgumentError(
+                    f"parameter {name} must be a boolean",
+                    operation=spec.name,
+                    details={"parameter": name},
+                )
         return normalized
 
     def _resolve_target(self, spec: OpSpec, target: Any) -> DocumentHandle | None:
@@ -187,6 +218,132 @@ class OperationDispatcher:
         if operation == "part.rebuild":
             assert target is not None
             return _dict(self.executor.rebuild(target))
+        if operation == "sketch.create":
+            assert target is not None
+            return _dict(self.executor.create_sketch(target, params["plane"]))
+        if operation == "sketch.list":
+            assert target is not None
+            return {"sketches": [_dict(item) for item in self.executor.list_sketches(target)]}
+        if operation == "sketch.inspect":
+            assert target is not None
+            sketch = _sketch_from_value(params["sketch"], operation)
+            return _dict(self.executor.inspect_sketch(target, sketch))
+        if operation == "sketch.add_line":
+            assert target is not None
+            sketch = _sketch_from_value(params["sketch"], operation)
+            return _dict(
+                self.executor.add_line(
+                    target,
+                    sketch,
+                    params["start_x_mm"],
+                    params["start_y_mm"],
+                    params["end_x_mm"],
+                    params["end_y_mm"],
+                )
+            )
+        if operation == "sketch.add_rectangle":
+            assert target is not None
+            sketch = _sketch_from_value(params["sketch"], operation)
+            return {
+                "entities": [
+                    _dict(item)
+                    for item in self.executor.add_sketch_rectangle(
+                        target,
+                        sketch,
+                        params["width_mm"],
+                        params["height_mm"],
+                        params["origin_x_mm"],
+                        params["origin_y_mm"],
+                    )
+                ]
+            }
+        if operation == "sketch.add_circle":
+            assert target is not None
+            sketch = _sketch_from_value(params["sketch"], operation)
+            return _dict(
+                self.executor.add_circle(
+                    target,
+                    sketch,
+                    params["center_x_mm"],
+                    params["center_y_mm"],
+                    params["radius_mm"],
+                )
+            )
+        if operation == "sketch.add_arc":
+            assert target is not None
+            sketch = _sketch_from_value(params["sketch"], operation)
+            return _dict(
+                self.executor.add_arc(
+                    target,
+                    sketch,
+                    params["center_x_mm"],
+                    params["center_y_mm"],
+                    params["start_x_mm"],
+                    params["start_y_mm"],
+                    params["end_x_mm"],
+                    params["end_y_mm"],
+                    params["direction"],
+                )
+            )
+        if operation == "sketch.add_relation":
+            assert target is not None
+            sketch = _sketch_from_value(params["sketch"], operation)
+            entities = _entities_from_value(params["entities"], operation)
+            try:
+                relation_type = RelationType(params["relation_type"])
+            except ValueError as exc:
+                raise InvalidArgumentError(
+                    "unsupported sketch relation type",
+                    operation=operation,
+                    details={"relation_type": params["relation_type"]},
+                ) from exc
+            return _dict(
+                self.executor.add_relation(
+                    target,
+                    sketch,
+                    relation_type,
+                    entities,
+                    anchor_origin=params["anchor_origin"],
+                )
+            )
+        if operation == "sketch.add_dimension":
+            assert target is not None
+            sketch = _sketch_from_value(params["sketch"], operation)
+            entities = _entities_from_value(params["entities"], operation)
+            try:
+                dimension_type = DimensionType(params["dimension_type"])
+            except ValueError as exc:
+                raise InvalidArgumentError(
+                    "unsupported sketch dimension type",
+                    operation=operation,
+                    details={"dimension_type": params["dimension_type"]},
+                ) from exc
+            return _dict(
+                self.executor.add_dimension(
+                    target,
+                    sketch,
+                    dimension_type,
+                    entities,
+                    params["value_mm"],
+                    params["position_x_mm"],
+                    params["position_y_mm"],
+                )
+            )
+        if operation == "sketch.set_dimension":
+            assert target is not None
+            sketch = _sketch_from_value(params["sketch"], operation)
+            dimension = _dimension_from_value(params["dimension"], operation)
+            return _dict(self.executor.set_dimension(target, sketch, dimension, params["value_mm"]))
+        if operation == "sketch.inspect_entity":
+            assert target is not None
+            sketch = _sketch_from_value(params["sketch"], operation)
+            entity = _entity_from_value(params["entity"], operation)
+            return _dict(self.executor.inspect_entity(target, sketch, entity))
+        if operation == "sketch.inspect_dimension":
+            assert target is not None
+            sketch = _sketch_from_value(params["sketch"], operation)
+            dimension = _dimension_from_value(params["dimension"], operation)
+            return _dict(self.executor.inspect_dimension(target, sketch, dimension))
         if operation == "part.create_rectangular_extrude":
             document = self.executor.create_part()
             sketch = self.executor.create_sketch(document, params["plane"])
@@ -259,3 +416,71 @@ def _serialize(value: Any) -> Any:
     if isinstance(value, (tuple, list)):
         return [_serialize(item) for item in value]
     return value
+
+
+def _sketch_from_value(value: Any, operation: str) -> SketchHandle:
+    if isinstance(value, SketchHandle):
+        return value
+    if not isinstance(value, Mapping):
+        raise InvalidArgumentError("sketch must be a serialized handle", operation=operation)
+    try:
+        return SketchHandle(
+            id=str(value["id"]),
+            document_id=str(value["document_id"]),
+            name=str(value["name"]),
+            plane=str(value["plane"]),
+            persistent_ref=(str(value["persistent_ref"]) if value.get("persistent_ref") else None),
+        )
+    except (KeyError, TypeError) as exc:
+        raise InvalidArgumentError("sketch handle is incomplete", operation=operation) from exc
+
+
+def _entity_from_value(value: Any, operation: str) -> SketchEntityHandle:
+    if isinstance(value, SketchEntityHandle):
+        return value
+    if not isinstance(value, Mapping):
+        raise InvalidArgumentError("entity must be a serialized handle", operation=operation)
+    try:
+        return SketchEntityHandle(
+            id=str(value["id"]),
+            document_id=str(value["document_id"]),
+            sketch_id=str(value["sketch_id"]),
+            entity_type=SketchEntityType(value["entity_type"]),
+            persistent_ref=str(value["persistent_ref"]),
+            sketch_persistent_ref=(
+                str(value["sketch_persistent_ref"]) if value.get("sketch_persistent_ref") else None
+            ),
+            start_x_mm=value.get("start_x_mm"),
+            start_y_mm=value.get("start_y_mm"),
+            end_x_mm=value.get("end_x_mm"),
+            end_y_mm=value.get("end_y_mm"),
+            center_x_mm=value.get("center_x_mm"),
+            center_y_mm=value.get("center_y_mm"),
+            radius_mm=value.get("radius_mm"),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise InvalidArgumentError("entity handle is incomplete", operation=operation) from exc
+
+
+def _entities_from_value(value: Any, operation: str) -> tuple[SketchEntityHandle, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise InvalidArgumentError("entities must be an array", operation=operation)
+    return tuple(_entity_from_value(item, operation) for item in value)
+
+
+def _dimension_from_value(value: Any, operation: str) -> DimensionHandle:
+    if isinstance(value, DimensionHandle):
+        return value
+    if not isinstance(value, Mapping):
+        raise InvalidArgumentError("dimension must be a serialized handle", operation=operation)
+    try:
+        return DimensionHandle(
+            id=str(value["id"]),
+            sketch_id=str(value["sketch_id"]),
+            dimension_type=DimensionType(value["dimension_type"]),
+            name=str(value["name"]),
+            value_mm=float(value["value_mm"]),
+            persistent_ref=(str(value["persistent_ref"]) if value.get("persistent_ref") else None),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise InvalidArgumentError("dimension handle is incomplete", operation=operation) from exc

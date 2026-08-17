@@ -18,6 +18,17 @@ from cadipy.backends.executor import (
     SolidWorksExecutor,
 )
 from cadipy.domain.documents import DocumentType
+from cadipy.domain.sketches import (
+    DimensionHandle,
+    DimensionInspection,
+    DimensionType,
+    RelationHandle,
+    RelationType,
+    SketchEntityHandle,
+    SketchEntityInspection,
+    SketchEntityType,
+    SketchInspection,
+)
 
 
 class FakeWorkerExecutor:
@@ -75,6 +86,118 @@ class FakeWorkerExecutor:
 
     def create_sketch(self, document: DocumentHandle, plane: str) -> SketchHandle:
         return SketchHandle(id="sketch-1", document_id=document.id, name="Sketch1", plane=plane)
+
+    def list_sketches(self, document: DocumentHandle) -> tuple[SketchHandle, ...]:
+        return (self.create_sketch(document, "Front Plane"),)
+
+    def inspect_sketch(self, document: DocumentHandle, sketch: SketchHandle) -> SketchInspection:
+        return SketchInspection(sketch.id, sketch.name, sketch.plane, 0, 0, 0, None)
+
+    def add_line(
+        self,
+        document: DocumentHandle,
+        sketch: SketchHandle,
+        start_x_mm: float,
+        start_y_mm: float,
+        end_x_mm: float,
+        end_y_mm: float,
+    ) -> SketchEntityHandle:
+        return SketchEntityHandle(
+            "entity-1",
+            document.id,
+            sketch.id,
+            SketchEntityType.LINE,
+            "AQID",
+            start_x_mm,
+            start_y_mm,
+            end_x_mm,
+            end_y_mm,
+        )
+
+    def add_sketch_rectangle(
+        self,
+        document: DocumentHandle,
+        sketch: SketchHandle,
+        width_mm: float,
+        height_mm: float,
+        origin_x_mm: float = 0.0,
+        origin_y_mm: float = 0.0,
+    ) -> tuple[SketchEntityHandle, ...]:
+        return (self.add_line(document, sketch, 0, 0, width_mm, height_mm),)
+
+    def add_circle(
+        self,
+        document: DocumentHandle,
+        sketch: SketchHandle,
+        center_x_mm: float,
+        center_y_mm: float,
+        radius_mm: float,
+    ) -> SketchEntityHandle:
+        return SketchEntityHandle(
+            "circle-1", document.id, sketch.id, SketchEntityType.CIRCLE, "AQID"
+        )
+
+    def add_arc(
+        self,
+        document: DocumentHandle,
+        sketch: SketchHandle,
+        center_x_mm: float,
+        center_y_mm: float,
+        start_x_mm: float,
+        start_y_mm: float,
+        end_x_mm: float,
+        end_y_mm: float,
+        direction: int = 1,
+    ) -> SketchEntityHandle:
+        return SketchEntityHandle("arc-1", document.id, sketch.id, SketchEntityType.ARC, "AQID")
+
+    def add_relation(
+        self,
+        document: DocumentHandle,
+        sketch: SketchHandle,
+        relation_type: RelationType,
+        entities: tuple[SketchEntityHandle, ...],
+    ) -> RelationHandle:
+        return RelationHandle("relation-1", sketch.id, relation_type, tuple(e.id for e in entities))
+
+    def add_dimension(
+        self,
+        document: DocumentHandle,
+        sketch: SketchHandle,
+        dimension_type: DimensionType,
+        entities: tuple[SketchEntityHandle, ...],
+        value_mm: float,
+        position_x_mm: float,
+        position_y_mm: float,
+    ) -> DimensionHandle:
+        return DimensionHandle("dimension-1", sketch.id, dimension_type, "D1@Sketch1", value_mm)
+
+    def set_dimension(
+        self,
+        document: DocumentHandle,
+        sketch: SketchHandle,
+        dimension: DimensionHandle,
+        value_mm: float,
+    ) -> DimensionHandle:
+        return DimensionHandle(
+            dimension.id, dimension.sketch_id, dimension.dimension_type, dimension.name, value_mm
+        )
+
+    def inspect_entity(
+        self,
+        document: DocumentHandle,
+        sketch: SketchHandle,
+        entity: SketchEntityHandle,
+    ) -> SketchEntityInspection:
+        return SketchEntityInspection(entity, entity.entity_type, 0)
+
+    def inspect_dimension(
+        self,
+        document: DocumentHandle,
+        sketch: SketchHandle,
+        dimension: DimensionHandle,
+    ) -> DimensionInspection:
+        return DimensionInspection(dimension, dimension.value_mm)
 
     def add_rectangle(
         self,

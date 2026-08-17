@@ -25,3 +25,5 @@ with connect() as cad:
 ```
 
 Document targets must explicitly provide at least one of `document_id`, `path`, `title`, `document_type`, or `configuration`. Each operation resolves its target once before backend execution, so changing the SOLIDWORKS active document cannot redirect an explicitly bound operation. `document.list`, `document.active`, `document.open`, and `document.close` use the same session registry.
+
+Parametric sketches are composed through the same session `execute()` method: `sketch.create` creates a plane sketch; `sketch.add_line`, `sketch.add_rectangle`, `sketch.add_circle`, and `sketch.add_arc` return serializable entity handles; `sketch.add_relation`, `sketch.add_dimension`, and `sketch.set_dimension` then modify the model. Public lengths remain millimetres, and saved/reopened entities are resolved through persistent references.

@@ -26,4 +26,6 @@ with connect() as cad:
 
 文档目标必须显式提供 `document_id`、`path`、`title`、`document_type` 或 `configuration` 中的至少一项。每个操作开始前只解析一次目标；SOLIDWORKS 当前 active document 改变不会把明确目标切换到另一文档。`document.list`、`document.active`、`document.open` 和 `document.close` 也通过同一 session registry 工作。
 
+参数化草图通过同一个 session 的 `execute()` 组合：`sketch.create` 创建平面草图，`sketch.add_line` / `sketch.add_rectangle` / `sketch.add_circle` / `sketch.add_arc` 返回可序列化实体句柄，随后用 `sketch.add_relation`、`sketch.add_dimension` 和 `sketch.set_dimension` 修改模型。所有长度仍使用毫米；实体保存/重开后使用 persistent reference 重新解析。
+
 CLI 使用 `cadipy check` 或 `cadipy server status` 检查执行环境；统一操作可通过 `cadipy operation <name> --params-json '<json>'` 调用。

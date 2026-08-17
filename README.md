@@ -8,6 +8,7 @@ CADiPy 是面向长期维护的 SOLIDWORKS agent automation 工程。Python 负�
 - 统一的 domain / operations / backends / protocol / verification / diagnostics / audit 结构；
 - 所有公开长度使用 `*_mm`，角度使用 `*_deg`，内部米/弧度仅存在于 SolidWorks backend；
 - CLI、RPC、MCP 共同消费同一个 OpSpec registry 和 dispatcher；
+- P1 参数化草图核心：可序列化 Sketch entity identity、line/rectangle/circle/arc、关系、尺寸和 save/reopen 重新解析；
 - 真实 SOLIDWORKS 纵向契约：Part → Sketch → 100×60 mm 矩形 → 3 mm 拉伸 → rebuild → postcondition verification → SLDPRT round-trip。
 
 ## 开发

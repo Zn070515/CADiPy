@@ -76,13 +76,15 @@ The identity-bearing fields are the owning sketch and persistent reference. `id`
 
 ### RelationHandle and DimensionHandle
 
-Relations contain a session-local ID, owning sketch ID, relation type, and ordered entity IDs. Dimensions contain a session-local ID, owning sketch ID, dimension type, display name, value in millimetres, and an optional persistent reference when SOLIDWORKS exposes one. Relation and dimension entity references are validated before execution.
+Relations contain a session-local ID, owning sketch ID, relation type, and ordered entity IDs. Dimensions contain a session-local ID, owning sketch ID, dimension type, display name, value in millimetres, and an optional persistent reference when SOLIDWORKS exposes one. In the verified SOLIDWORKS 2026 late-bound runtime, sketch dimensions are resolved by their SOLIDWORKS parameter name and that name is required to belong to the requested sketch. This is an explicit dimension identity rule, not an arbitrary name fallback. Relation and dimension entity references are validated before execution.
 
 Public dimension values are always `*_mm` for length/radius/diameter contracts. Angles are not part of the first dimension contract. No public CADiPy sketch API accepts SOLIDWORKS metres or radians.
 
 ## Persistent-reference policy
 
 The SOLIDWORKS 2026 API exposes `GetPersistReference3` and `GetObjectByPersistReference3`. The Python COM adapter stores the returned byte array as base64 and reconstructs a COM SafeArray only inside the backend. The resolve call passes the explicit error-code out parameter and treats all non-success states or null objects as `entity_reference_invalid`.
+
+Each entity handle also carries the owning sketch persistent reference when SOLIDWORKS provides it. On resolution the backend verifies that the entity reference is one of the resolved sketch's current segment references; a reference from another sketch in the same Part is rejected. `document_id` and `sketch_id` remain session handles and are not treated as sufficient cross-session identity.
 
 The backend must never fall back to:
 
@@ -166,4 +168,3 @@ The implementation is based on local SOLIDWORKS 2026 COM probing plus the offici
 - [AddDimension2](https://help.solidworks.com/2026/english/api/sldworksapi/SOLIDWORKS.Interop.sldworks~SOLIDWORKS.Interop.sldworks.IModelDoc2~AddDimension2.html)
 
 The local probe specifically established that Python COM must pass a `VT_ARRAY | VT_UI1` SafeArray and a by-reference integer error value to `GetObjectByPersistReference3`; this behavior is covered by backend tests and the strict fixture.
-

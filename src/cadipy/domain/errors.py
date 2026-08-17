@@ -54,6 +54,10 @@ class AmbiguousSelectionError(CadipyError):
     code = "ambiguous_selection"
 
 
+class EntityReferenceInvalidError(CadipyError):
+    code = "entity_reference_invalid"
+
+
 class DocumentTypeError(CadipyError):
     code = "document_type"
 

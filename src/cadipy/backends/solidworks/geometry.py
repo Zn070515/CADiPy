@@ -56,6 +56,114 @@ def add_rectangle(document: Any, width_mm: float, height_mm: float) -> Any:
         return segments
 
 
+def add_line(
+    document: Any,
+    start_x_mm: float,
+    start_y_mm: float,
+    end_x_mm: float,
+    end_y_mm: float,
+) -> Any:
+    try:
+        segment = document.SketchManager.CreateLine(
+            mm_to_sw_m(start_x_mm),
+            mm_to_sw_m(start_y_mm),
+            0.0,
+            mm_to_sw_m(end_x_mm),
+            mm_to_sw_m(end_y_mm),
+            0.0,
+        )
+        _require_value(
+            segment,
+            message="SOLIDWORKS returned no line segment",
+            operation="solidworks.add_line",
+        )
+    except ComOperationError:
+        raise
+    except Exception as exc:
+        raise ComOperationError(
+            "SOLIDWORKS could not create the line",
+            operation="solidworks.add_line",
+        ) from exc
+    return segment
+
+
+def add_circle(
+    document: Any,
+    center_x_mm: float,
+    center_y_mm: float,
+    radius_mm: float,
+) -> Any:
+    try:
+        segment = document.SketchManager.CreateCircleByRadius(
+            mm_to_sw_m(center_x_mm),
+            mm_to_sw_m(center_y_mm),
+            0.0,
+            mm_to_sw_m(radius_mm),
+        )
+        _require_value(
+            segment,
+            message="SOLIDWORKS returned no circle segment",
+            operation="solidworks.add_circle",
+        )
+    except ComOperationError:
+        raise
+    except Exception as exc:
+        raise ComOperationError(
+            "SOLIDWORKS could not create the circle",
+            operation="solidworks.add_circle",
+        ) from exc
+    return segment
+
+
+def add_arc(
+    document: Any,
+    center_x_mm: float,
+    center_y_mm: float,
+    start_x_mm: float,
+    start_y_mm: float,
+    end_x_mm: float,
+    end_y_mm: float,
+    direction: int,
+) -> Any:
+    try:
+        segment = document.SketchManager.CreateArc(
+            mm_to_sw_m(center_x_mm),
+            mm_to_sw_m(center_y_mm),
+            0.0,
+            mm_to_sw_m(start_x_mm),
+            mm_to_sw_m(start_y_mm),
+            0.0,
+            mm_to_sw_m(end_x_mm),
+            mm_to_sw_m(end_y_mm),
+            0.0,
+            int(direction),
+        )
+        _require_value(
+            segment,
+            message="SOLIDWORKS returned no arc segment",
+            operation="solidworks.add_arc",
+        )
+    except ComOperationError:
+        raise
+    except Exception as exc:
+        raise ComOperationError(
+            "SOLIDWORKS could not create the arc",
+            operation="solidworks.add_arc",
+        ) from exc
+    return segment
+
+
+def finish_sketch(document: Any) -> None:
+    try:
+        if document.SketchManager.ActiveSketch is not None:
+            document.SketchManager.InsertSketch(False)
+    except Exception as exc:
+        raise ComOperationError(
+            "SOLIDWORKS could not finish the sketch",
+            operation="solidworks.finish_sketch",
+        ) from exc
+
+
 def extrude(document: Any, sketch_name: str, depth_mm: float) -> Any:
     depth = mm_to_sw_m(depth_mm)
     try:
