@@ -761,6 +761,16 @@ Before merge:
 * confirm no generated junk or CAD output accidentally entered Git;
 * merge with explicit history or PR according to repository policy.
 
+After the applicable gates pass, completed work must be integrated directly without
+creating a pull request unless the user explicitly overrides this rule:
+
+* commit the focused change on the feature branch;
+* fast-forward merge the feature branch into `main`;
+* run the merged-result gates;
+* push `main` to `origin` over SSH;
+* delete the completed local feature branch and leave the working tree on `main`;
+* do not leave completed work waiting on a feature branch or pull request.
+
 Commits should be focused.
 
 Preferred prefixes:
