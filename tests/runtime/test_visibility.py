@@ -44,7 +44,7 @@ class VisibilityExecutor:
 def test_launch_defaults_to_visible_and_reports_visibility() -> None:
     executor = VisibilityExecutor(visible=False)
 
-    with launch(executor=executor) as session:
+    with launch(executor_factory=lambda: executor) as session:
         result = session.execute("application.info")
 
     assert executor.calls[0] == ("launch", True)
@@ -54,7 +54,7 @@ def test_launch_defaults_to_visible_and_reports_visibility() -> None:
 def test_connect_preserves_existing_visibility_by_default() -> None:
     executor = VisibilityExecutor(visible=False)
 
-    with connect(executor=executor) as session:
+    with connect(executor_factory=lambda: executor) as session:
         result = session.execute("application.info")
 
     assert executor.calls[0] == ("attach", None)
@@ -64,7 +64,7 @@ def test_connect_preserves_existing_visibility_by_default() -> None:
 def test_connect_can_explicitly_set_visibility() -> None:
     executor = VisibilityExecutor(visible=False)
 
-    with connect(executor=executor, visible=True) as session:
+    with connect(executor_factory=lambda: executor, visible=True) as session:
         result = session.execute("application.info")
 
     assert executor.calls[0] == ("attach", True)
@@ -74,7 +74,7 @@ def test_connect_can_explicitly_set_visibility() -> None:
 def test_application_set_visibility_is_the_public_mutation() -> None:
     executor = VisibilityExecutor(visible=True)
 
-    with connect(executor=executor) as session:
+    with connect(executor_factory=lambda: executor) as session:
         result = session.execute(
             "application.set_visibility",
             params={"visible": False},

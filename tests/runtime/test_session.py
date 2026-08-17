@@ -4,6 +4,7 @@ import threading
 
 import pytest
 
+from cadipy.api import execute
 from cadipy.backends.executor import ApplicationInfo
 from cadipy.domain.errors import CadipyError, SessionClosedError
 from cadipy.session import CadipySession
@@ -38,7 +39,7 @@ def test_session_shares_one_dispatcher_with_rpc_and_mcp(
 ) -> None:
     executor = session_executor
 
-    with CadipySession(executor=executor, connection_mode="attach") as session:
+    with CadipySession(executor_factory=lambda: executor, connection_mode="attach") as session:
         assert session.server.session is session
         assert session.mcp.server.session is session
         result = session.execute("application.info")
@@ -75,8 +76,23 @@ def test_session_exit_disconnects_when_dispatch_raises() -> None:
 
     with (
         pytest.raises(CadipyError, match="application info failed"),
-        CadipySession(executor=executor, connection_mode="attach") as session,
+        CadipySession(executor_factory=lambda: executor, connection_mode="attach") as session,
     ):
         session.execute("application.info")
 
     assert executor.disconnected is True
+
+
+def test_api_execute_factory_uses_host_backed_session() -> None:
+    created: list[FakeExecutor] = []
+
+    def factory() -> FakeExecutor:
+        executor = FakeExecutor()
+        created.append(executor)
+        return executor
+
+    result = execute("application.info", executor=factory)
+
+    assert result.ok is True
+    assert created[0].created_thread_id != threading.get_ident()
+    assert created[0].disconnected is True

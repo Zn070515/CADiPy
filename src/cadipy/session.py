@@ -31,17 +31,12 @@ class CadipySession:
     def __init__(
         self,
         *,
-        executor: SolidWorksExecutor | None = None,
         executor_factory: Callable[[], SolidWorksExecutor] | None = None,
         connection_mode: ConnectionMode = "attach",
         visible: bool | None = None,
         audit_recorder: AuditRecorder | None = None,
     ) -> None:
-        if executor is not None and executor_factory is not None:
-            raise ValueError("provide executor or executor_factory, not both")
-        self._executor_factory = executor_factory or (
-            (lambda: executor) if executor is not None else PythonComSolidWorksExecutor
-        )
+        self._executor_factory = executor_factory or PythonComSolidWorksExecutor
         self.connection_mode = connection_mode
         self.visible = visible
         self._audit_recorder = audit_recorder

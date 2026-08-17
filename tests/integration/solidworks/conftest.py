@@ -75,10 +75,9 @@ def solidworks_session(
     if sys.version_info[:2] != (3, 12):
         _precondition_failure(strict, "strict baseline requires Python 3.12")
 
-    connection_mode = "launch" if solidworks_executor.application_info().owned else "attach"
     session = CadipySession(
-        executor=solidworks_executor,
-        connection_mode=connection_mode,
+        executor_factory=PythonComSolidWorksExecutor,
+        connection_mode="attach",
         visible=solidworks_executor.application_info().visible,
     )
     try:

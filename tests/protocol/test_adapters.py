@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
+from cadipy.audit.recorder import AuditRecorder
 from cadipy.protocol.client import ProtocolClient
 from cadipy.protocol.mcp import McpAdapter
 from cadipy.protocol.server import ProtocolServer
@@ -10,16 +12,18 @@ from cadipy.session import CadipySession
 
 
 def test_rpc_and_mcp_adapters_share_dispatcher_and_serialized_result() -> None:
-    server = ProtocolServer.from_executor(_FakeExecutor())
-    request = {
-        "protocol": 1,
-        "id": "request-1",
-        "operation": "diagnostics.connect",
-        "params": {},
-    }
-    rpc_result = server.handle(request)
-    client_result = ProtocolClient(server.handle).call(request)
-    mcp_result = McpAdapter(server).call("diagnostics.connect", {})
+    audit = AuditRecorder()
+    with CadipySession(executor_factory=_FakeExecutor, audit_recorder=audit) as session:
+        server = ProtocolServer.from_session(session)
+        request = {
+            "protocol": 1,
+            "id": "request-1",
+            "operation": "diagnostics.connect",
+            "params": {},
+        }
+        rpc_result = server.handle(request)
+        client_result = ProtocolClient(server.handle).call(request)
+        mcp_result = McpAdapter(server).call("diagnostics.connect", {})
 
     assert rpc_result == client_result
     assert rpc_result["operation"] == mcp_result["operation"]
@@ -29,15 +33,14 @@ def test_rpc_and_mcp_adapters_share_dispatcher_and_serialized_result() -> None:
 
 
 def test_protocol_failure_uses_additive_execution_result_field() -> None:
-    server = ProtocolServer.from_executor(_FakeExecutor())
-
-    result = server.handle(
-        {
-            "protocol": 99,
-            "id": "request-2",
-            "operation": "diagnostics.connect",
-        }
-    )
+    with CadipySession(executor_factory=_FakeExecutor) as session:
+        result = session.server.handle(
+            {
+                "protocol": 99,
+                "id": "request-2",
+                "operation": "diagnostics.connect",
+            }
+        )
 
     assert result["ok"] is False
     assert result["error"]["code"] == "protocol"
@@ -46,7 +49,8 @@ def test_protocol_failure_uses_additive_execution_result_field() -> None:
 
 def test_session_adapters_route_concurrent_requests_through_one_host_thread() -> None:
     executor = _RecordingExecutor()
-    with CadipySession(executor=executor) as session:
+    audit = AuditRecorder()
+    with CadipySession(executor_factory=lambda: executor, audit_recorder=audit) as session:
         server = ProtocolServer.from_session(session)
         requests = [
             {
@@ -57,18 +61,42 @@ def test_session_adapters_route_concurrent_requests_through_one_host_thread() ->
             }
             for index in range(8)
         ]
+        turns = [Event() for _ in requests]
+        turns[0].set()
+
+        def call(index: int) -> dict[str, object]:
+            assert turns[index].wait(timeout=1.0)
+            result = server.handle(requests[index])
+            if index + 1 < len(turns):
+                turns[index + 1].set()
+            return result
+
         with ThreadPoolExecutor(max_workers=8) as pool:
-            results = list(pool.map(server.handle, requests))
+            results = list(pool.map(call, range(len(requests))))
 
     assert all(result["ok"] for result in results)
     assert len(set(executor.thread_ids)) == 1
-    assert executor.request_ids == [request["id"] for request in requests]
+    assert [event["request_id"] for event in audit.to_list()] == [
+        request["id"] for request in requests
+    ]
     assert not hasattr(server, "dispatcher")
     assert not hasattr(McpAdapter(server), "dispatcher")
+    assert not hasattr(ProtocolServer, "from_executor")
 
 
 class _FakeExecutor:
     executor_kind = "fake"
+
+    def attach(self, *, visible=None):
+        return self.application_info()
+
+    def disconnect(self):
+        return None
+
+    def application_info(self):
+        from cadipy.backends.executor import ApplicationInfo
+
+        return ApplicationInfo("SOLIDWORKS", "34.3.2", self.executor_kind)
 
     def connect(self):
         from cadipy.backends.executor import ApplicationInfo
@@ -79,22 +107,11 @@ class _FakeExecutor:
 class _RecordingExecutor(_FakeExecutor):
     def __init__(self) -> None:
         self.thread_ids: list[int] = []
-        self.request_ids: list[str] = []
-        self.disconnected = False
-
-    def disconnect(self):
-        self.disconnected = True
 
     def attach(self, *, visible=None):
-        return self._record("attach", visible)
+        self.thread_ids.append(threading.get_ident())
+        return self.application_info()
 
     def connect(self):
-        return self._record("connect", None)
-
-    def _record(self, operation: str, visible):
         self.thread_ids.append(threading.get_ident())
-        if operation == "connect":
-            self.request_ids.append("request-" + str(len(self.request_ids)))
-        from cadipy.backends.executor import ApplicationInfo
-
-        return ApplicationInfo("SOLIDWORKS", "34.3.2", self.executor_kind)
+        return self.application_info()
