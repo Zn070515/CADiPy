@@ -273,6 +273,44 @@ def test_host_rejects_none_executor_as_failed_start() -> None:
     assert isinstance(exc_info.value.__cause__, RuntimeError)
 
 
+def test_host_launch_failure_is_prompt_stable_and_safe_to_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launch_error = RuntimeError("thread launch failed")
+    original_start = threading.Thread.start
+    errors: list[BaseException] = []
+    host = StaExecutorHost(
+        lambda: RecordingExecutor(),
+        apartment_init=lambda: None,
+        apartment_uninit=lambda: None,
+    )
+
+    def fail_worker_start(thread: threading.Thread) -> None:
+        if thread is host._worker:
+            raise launch_error
+        original_start(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", fail_worker_start)
+
+    def start_host() -> None:
+        try:
+            host.start()
+        except BaseException as exc:
+            errors.append(exc)
+
+    start_thread = threading.Thread(target=start_host, daemon=True)
+    start_thread.start()
+    start_thread.join(timeout=1.0)
+
+    assert not start_thread.is_alive()
+    assert len(errors) == 1
+    assert isinstance(errors[0], WorkerError)
+    assert errors[0].__cause__ is launch_error
+    assert host.state is HostState.FAILED
+    assert not host._worker.is_alive()
+    host.close(timeout=30.0)
+
+
 def test_host_rejects_commands_after_close() -> None:
     host = StaExecutorHost(lambda: RecordingExecutor())
     host.start()

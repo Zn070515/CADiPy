@@ -47,6 +47,7 @@ class StaExecutorHost:
         self._startup_error: BaseException | None = None
         self._cleanup_error: WorkerError | None = None
         self._worker_ident: int | None = None
+        self._worker_started = False
         self._stop_enqueued = False
         self._worker = threading.Thread(target=self._run, name="cadipy-executor", daemon=True)
 
@@ -64,9 +65,12 @@ class StaExecutorHost:
                 try:
                     self._worker.start()
                 except BaseException as exc:
-                    self._record_startup_failure(exc)
+                    error = WorkerError("executor host startup failed")
+                    self._startup_error = error
+                    self._state = HostState.FAILED
                     self._started.set()
-                    raise
+                    raise error from exc
+                self._worker_started = True
             else:
                 raise SessionClosedError("executor host cannot be started in its current state")
         self._started.wait()
@@ -111,6 +115,8 @@ class StaExecutorHost:
             if not self._stop_enqueued and worker.is_alive():
                 self._commands.put(None)
                 self._stop_enqueued = True
+            if not self._worker_started:
+                return
         worker.join(timeout)
         if worker.is_alive():
             with self._state_lock:
