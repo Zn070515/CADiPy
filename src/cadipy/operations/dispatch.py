@@ -29,7 +29,7 @@ from cadipy.protocol.result import OperationResult
 from cadipy.verification.postconditions import verify_rectangular_extrusion
 
 from .registry import OPERATION_REGISTRY, OpSpec
-from .schema import ParamSpec, validate_parameters
+from .schema import validate_parameters
 
 if TYPE_CHECKING:
     from cadipy.audit.recorder import AuditRecorder
@@ -83,9 +83,7 @@ class OperationDispatcher:
         )
 
     def _validate_params(self, spec: OpSpec, params: Mapping[str, Any]) -> dict[str, Any]:
-        return validate_parameters(
-            cast("Mapping[str, ParamSpec]", spec.parameters), params, operation=spec.name
-        )
+        return validate_parameters(spec.parameters, params, operation=spec.name)
 
     def _resolve_target(self, spec: OpSpec, target: Any) -> DocumentHandle | None:
         if target is None:

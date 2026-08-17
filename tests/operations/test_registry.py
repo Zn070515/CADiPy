@@ -27,6 +27,9 @@ def test_registry_has_unique_explicit_cad_operation_specs() -> None:
         for spec in specs
         for postcondition in spec.postconditions
     )
+    assert all(not hasattr(spec, "document_types") for spec in specs)
+    assert all(spec.target_document_types is not None for spec in specs)
+    assert all(spec.result_document_types is not None for spec in specs)
 
 
 def test_operation_spec_exposes_typed_document_and_postcondition_contracts() -> None:

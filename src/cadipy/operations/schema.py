@@ -30,7 +30,7 @@ class ParamSpec:
     required: bool = False
     default: Any = field(default=_MISSING, repr=False)
     unit: str | None = None
-    finite: bool = False
+    finite: bool = True
     minimum: float | None = None
     exclusive_minimum: float | None = None
     maximum: float | None = None
@@ -61,10 +61,6 @@ class ParamSpec:
         if self.choices is not None:
             result["choices"] = sorted(self.choices)
         return result
-
-    def __getitem__(self, key: str) -> Any:
-        """Read legacy dictionary keys while callers migrate to typed fields."""
-        return self.to_dict()[key]
 
 
 Verifier = Callable[[Any], Any] | str

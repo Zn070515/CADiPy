@@ -20,6 +20,6 @@ def test_parametric_sketch_operations_are_authoritative_specs() -> None:
     }
 
     assert expected <= OPERATION_REGISTRY.keys()
-    assert OPERATION_REGISTRY["sketch.add_line"].parameters["start_x_mm"]["unit"] == "mm"
-    assert OPERATION_REGISTRY["sketch.add_dimension"].parameters["value_mm"]["unit"] == "mm"
-    assert OPERATION_REGISTRY["sketch.add_relation"].parameters["anchor_origin"]["default"] is False
+    assert OPERATION_REGISTRY["sketch.add_line"].parameters["start_x_mm"].unit == "mm"
+    assert OPERATION_REGISTRY["sketch.add_dimension"].parameters["value_mm"].unit == "mm"
+    assert OPERATION_REGISTRY["sketch.add_relation"].parameters["anchor_origin"].default is False

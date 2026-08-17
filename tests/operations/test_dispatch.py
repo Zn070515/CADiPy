@@ -174,6 +174,27 @@ def test_part_operation_rejects_assembly_target() -> None:
     assert executor.calls == []
 
 
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_dispatcher_rejects_non_finite_numeric_cad_params_before_executor_call(
+    value: float,
+) -> None:
+    executor = FakeExecutor()
+
+    with pytest.raises(InvalidArgumentError):
+        OperationDispatcher(executor).dispatch(
+            {
+                "id": "request-1",
+                "operation": "part.create_rectangular_extrude",
+                "params": {
+                    "width_mm": 100.0,
+                    "height_mm": 60.0,
+                    "depth_mm": value,
+                },
+            }
+        )
+    assert executor.calls == []
+
+
 def test_dispatcher_records_public_audit_evidence() -> None:
     recorder = AuditRecorder()
     result = OperationDispatcher(FakeExecutor(), audit_recorder=recorder).dispatch(
