@@ -224,6 +224,55 @@ def test_host_surfaces_apartment_cleanup_failure_during_failed_start() -> None:
     assert exc_info.value.__cause__ is cleanup_error
 
 
+def test_host_start_waits_for_failed_start_cleanup_before_reporting_error() -> None:
+    startup_error = RuntimeError("factory failed")
+    cleanup_started = threading.Event()
+    release_cleanup = threading.Event()
+    errors: list[BaseException] = []
+    host = StaExecutorHost(
+        lambda: (_ for _ in ()).throw(startup_error),
+        apartment_init=lambda: None,
+        apartment_uninit=lambda: (cleanup_started.set(), release_cleanup.wait(timeout=1.0)),
+    )
+
+    def start_host() -> None:
+        try:
+            host.start()
+        except BaseException as exc:
+            errors.append(exc)
+
+    start_thread = threading.Thread(target=start_host)
+    start_thread.start()
+    assert cleanup_started.wait(timeout=1.0)
+    assert start_thread.is_alive()
+    assert not errors
+
+    release_cleanup.set()
+    start_thread.join(timeout=1.0)
+
+    assert len(errors) == 1
+    assert isinstance(errors[0], WorkerError)
+    assert errors[0].__cause__ is startup_error
+    assert host.state is HostState.FAILED
+
+
+def test_host_rejects_none_executor_as_failed_start() -> None:
+    uninitialized = threading.Event()
+    host = StaExecutorHost(
+        lambda: None,
+        apartment_init=lambda: None,
+        apartment_uninit=uninitialized.set,
+    )
+
+    with pytest.raises(WorkerError, match="startup failed") as exc_info:
+        host.start()
+
+    assert host.state is HostState.FAILED
+    assert not host._worker.is_alive()
+    assert uninitialized.is_set()
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+
 def test_host_rejects_commands_after_close() -> None:
     host = StaExecutorHost(lambda: RecordingExecutor())
     host.start()
@@ -261,10 +310,11 @@ def test_host_delivers_command_exceptions_without_stopping_worker() -> None:
 
 def test_host_transitions_to_failed_when_executor_creation_fails() -> None:
     host = StaExecutorHost(lambda: (_ for _ in ()).throw(RuntimeError("cannot create")))
-    with pytest.raises(RuntimeError, match="cannot create"):
+    with pytest.raises(WorkerError, match="startup failed") as exc_info:
         host.start()
 
     assert host.state is HostState.FAILED
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
     with pytest.raises(WorkerError):
         host.submit(lambda: None)
 

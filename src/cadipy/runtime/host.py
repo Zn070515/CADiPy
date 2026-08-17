@@ -64,8 +64,7 @@ class StaExecutorHost:
                 try:
                     self._worker.start()
                 except BaseException as exc:
-                    self._startup_error = exc
-                    self._state = HostState.FAILED
+                    self._record_startup_failure(exc)
                     self._started.set()
                     raise
             else:
@@ -132,12 +131,16 @@ class StaExecutorHost:
             self._startup_error = exc
             with self._state_lock:
                 self._state = HostState.FAILED
-        finally:
-            self._started.set()
 
         if executor is None:
+            if self._startup_error is None:
+                self._startup_error = RuntimeError("executor factory returned no executor")
+                with self._state_lock:
+                    self._state = HostState.FAILED
             if apartment_initialized:
                 self._uninitialize_apartment()
+            if self._cleanup_error is None:
+                self._record_startup_failure(self._startup_error)
             self._started.set()
             return
 
@@ -205,6 +208,13 @@ class StaExecutorHost:
         error.__cause__ = cause
         with self._state_lock:
             self._cleanup_error = error
+            self._state = HostState.FAILED
+
+    def _record_startup_failure(self, cause: BaseException) -> None:
+        error = WorkerError("executor host startup failed")
+        error.__cause__ = cause
+        with self._state_lock:
+            self._startup_error = error
             self._state = HostState.FAILED
 
     def _ensure_accepting(self) -> None:
