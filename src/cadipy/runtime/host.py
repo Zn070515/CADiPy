@@ -56,32 +56,34 @@ class StaExecutorHost:
             return self._state
 
     def start(self) -> None:
-        start_worker = False
         with self._state_lock:
             if self._state is HostState.RUNNING:
                 pass
             elif self._state is HostState.CREATED:
                 self._state = HostState.RUNNING
-                start_worker = True
-            else:
-                raise SessionClosedError("executor host cannot be started in its current state")
-        if start_worker:
-            try:
-                self._worker.start()
-            except BaseException as exc:
-                with self._state_lock:
+                try:
+                    self._worker.start()
+                except BaseException as exc:
                     self._startup_error = exc
                     self._state = HostState.FAILED
                     self._started.set()
-                raise
+                    raise
+            else:
+                raise SessionClosedError("executor host cannot be started in its current state")
         self._started.wait()
+        if self._cleanup_error is not None:
+            raise self._cleanup_error
         if self._startup_error is not None:
             raise self._startup_error
 
     def submit(self, command: Callable[[], ResultT], timeout: float | None = None) -> ResultT:
         if threading.get_ident() == self._worker_ident:
-            self._ensure_accepting()
-            return command()
+            nested_future: Future[ResultT] = Future()
+            with self._state_lock:
+                self._ensure_accepting_locked()
+                self._commands.put((command, nested_future))
+            self._run_until_complete(nested_future)
+            return nested_future.result()
 
         future: Future[ResultT] = Future()
         with self._state_lock:
@@ -136,8 +138,10 @@ class StaExecutorHost:
         if executor is None:
             if apartment_initialized:
                 self._uninitialize_apartment()
+            self._started.set()
             return
 
+        self._started.set()
         try:
             self._serve()
         finally:
@@ -148,17 +152,28 @@ class StaExecutorHost:
             item = self._commands.get()
             if item is None:
                 return
+            self._execute(item)
 
-            command, future = item
-            if self.state is HostState.FAILED:
-                if not future.done():
-                    future.set_exception(WorkerError("executor host failed"))
-                continue
-            try:
-                future.set_result(command())
-            except BaseException as exc:
-                if not future.done():
-                    future.set_exception(exc)
+    def _run_until_complete(self, target: Future[Any]) -> None:
+        while not target.done():
+            item = self._commands.get()
+            if item is None:
+                target.set_exception(SessionClosedError("executor host is closed"))
+                self._commands.put(None)
+                return
+            self._execute(item)
+
+    def _execute(self, item: Command) -> None:
+        command, future = item
+        if self.state is HostState.FAILED:
+            if not future.done():
+                future.set_exception(WorkerError("executor host failed"))
+            return
+        try:
+            future.set_result(command())
+        except BaseException as exc:
+            if not future.done():
+                future.set_exception(exc)
 
     def _disconnect_and_uninitialize(self, executor: Any) -> None:
         cleanup_cause: BaseException | None = None

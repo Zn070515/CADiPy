@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
+from concurrent.futures import Future
 
 import pytest
 
@@ -125,6 +126,102 @@ def test_host_surfaces_disconnect_failure_and_preserves_failed_state() -> None:
     assert host.state is HostState.FAILED
     assert exc_info.value.__cause__ is cleanup_error
     assert uninitialized.is_set()
+
+
+def test_host_close_waits_for_thread_start_before_joining(monkeypatch: pytest.MonkeyPatch) -> None:
+    original_start = threading.Thread.start
+    start_entered = threading.Event()
+    release_start = threading.Event()
+    errors: list[BaseException] = []
+    host = StaExecutorHost(
+        lambda: RecordingExecutor(),
+        apartment_init=lambda: None,
+        apartment_uninit=lambda: None,
+    )
+
+    def delayed_start(thread: threading.Thread) -> None:
+        if thread is not host._worker:
+            original_start(thread)
+            return
+        start_entered.set()
+        release_start.wait(timeout=1.0)
+        original_start(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", delayed_start)
+
+    def start_host() -> None:
+        try:
+            host.start()
+        except BaseException as exc:
+            errors.append(exc)
+
+    start_thread = threading.Thread(target=start_host)
+    start_thread.start()
+    assert start_entered.wait(timeout=1.0)
+
+    close_thread = threading.Thread(target=lambda: host.close(timeout=1.0))
+    close_thread.start()
+    release_start.set()
+    start_thread.join(timeout=1.0)
+    close_thread.join(timeout=1.0)
+
+    assert not errors
+    assert not start_thread.is_alive()
+    assert not close_thread.is_alive()
+    assert host.state is HostState.CLOSED
+
+
+def test_host_reentrant_submission_preserves_existing_fifo_work() -> None:
+    events: list[str] = []
+    host = StaExecutorHost(
+        lambda: RecordingExecutor(),
+        apartment_init=lambda: None,
+        apartment_uninit=lambda: None,
+    )
+    host.start()
+    outer_future: Future[str] = Future()
+    queued_future: Future[str] = Future()
+
+    def queued_command() -> str:
+        events.append("queued")
+        return "queued"
+
+    def outer_command() -> str:
+        events.append("outer")
+        return host.submit(lambda: events.append("nested") or "nested")
+
+    host._commands.put((outer_command, outer_future))
+    host._commands.put((queued_command, queued_future))
+
+    try:
+        assert outer_future.result(timeout=1.0) == "nested"
+        assert events == ["outer", "queued", "nested"]
+        assert queued_future.result() == "queued"
+    finally:
+        host.close(timeout=30.0)
+
+
+def test_host_surfaces_apartment_cleanup_failure_during_failed_start() -> None:
+    startup_error = RuntimeError("factory failed")
+    cleanup_error = RuntimeError("uninitialize failed")
+
+    def factory() -> RecordingExecutor:
+        raise startup_error
+
+    def uninitialize() -> None:
+        raise cleanup_error
+
+    host = StaExecutorHost(
+        factory,
+        apartment_init=lambda: None,
+        apartment_uninit=uninitialize,
+    )
+
+    with pytest.raises(WorkerError, match="cleanup failed") as exc_info:
+        host.start()
+
+    assert host.state is HostState.FAILED
+    assert exc_info.value.__cause__ is cleanup_error
 
 
 def test_host_rejects_commands_after_close() -> None:
