@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, cast
 
@@ -11,6 +12,7 @@ if TYPE_CHECKING:
     from cadipy.operations.schema import PostconditionSpec
 
 PostconditionVerifier = Callable[[Mapping[str, Any], Any], Any]
+DIMENSION_TOLERANCE_MM = 0.01
 _POSTCONDITIONS: dict[str, PostconditionVerifier] = {}
 
 
@@ -63,7 +65,7 @@ register_postcondition(
 )
 register_postcondition(
     "application.visible == visible",
-    lambda data, _inspection: isinstance(data.get("visible"), bool),
+    lambda data, _inspection: data.get("visible") == data.get("_params", {}).get("visible"),
 )
 register_postcondition(
     "feature_exists",
@@ -79,7 +81,10 @@ register_postcondition(
 )
 register_postcondition("relation_exists", _data_value("relation"))
 register_postcondition("dimension_exists", _data_value("dimension"))
-register_postcondition("dimension_value_matches", _data_value("dimension"))
+register_postcondition(
+    "dimension_value_matches",
+    lambda data, _inspection: _dimension_value_matches(data),
+)
 register_postcondition(
     "rectangular_extrusion",
     lambda data, _inspection: data.get("verification_report", {}).get("passed", False),
@@ -97,4 +102,18 @@ def _inspection_type(data: Mapping[str, Any], inspection: Any) -> str | None:
         data.get("inspection", {}).get("document_type")
         if isinstance(data.get("inspection"), Mapping)
         else None
+    )
+
+
+def _dimension_value_matches(data: Mapping[str, Any]) -> bool:
+    dimension = data.get("dimension", data)
+    requested = data.get("_params", {}).get("value_mm")
+    if not isinstance(dimension, Mapping) or not isinstance(requested, (int, float)):
+        return False
+    observed = dimension.get("value_mm")
+    return isinstance(observed, (int, float)) and math.isclose(
+        observed,
+        requested,
+        rel_tol=0.0,
+        abs_tol=DIMENSION_TOLERANCE_MM,
     )

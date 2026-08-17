@@ -145,6 +145,54 @@ def test_required_verification_failure_raises_with_failed_execution_report() -> 
     assert caught.value.execution.state_certainty == "uncertain"
 
 
+def test_dimension_value_mismatch_fails_direct_dispatch_verification() -> None:
+    executor = SketchFakeExecutor()
+    document = DocumentHandle("doc-a", DocumentType.PART, "PartA")
+    dispatcher = OperationDispatcher(executor, target_resolver=lambda binding: document)
+
+    with pytest.raises(VerificationError) as caught:
+        dispatcher.dispatch(
+            {
+                "id": "dimension-mismatch",
+                "operation": "sketch.set_dimension",
+                "target": {"document_id": document.id},
+                "params": {
+                    "sketch": {
+                        "id": "sketch-1",
+                        "document_id": document.id,
+                        "name": "Sketch1",
+                        "plane": "Front Plane",
+                    },
+                    "dimension": {
+                        "id": "dimension-1",
+                        "sketch_id": "sketch-1",
+                        "dimension_type": "horizontal_distance",
+                        "name": "D1@Sketch1",
+                        "value_mm": 100.0,
+                    },
+                    "value_mm": 100.0,
+                },
+            }
+        )
+
+    assert caught.value.code == "verification_failed"
+    assert caught.value.execution.phase is ExecutionPhase.VERIFICATION_FAILED
+
+
+def test_visibility_mismatch_fails_direct_dispatch_verification() -> None:
+    with pytest.raises(VerificationError) as caught:
+        OperationDispatcher(VisibilityMismatchExecutor()).dispatch(
+            {
+                "id": "visibility-mismatch",
+                "operation": "application.set_visibility",
+                "params": {"visible": True},
+            }
+        )
+
+    assert caught.value.code == "verification_failed"
+    assert caught.value.execution.phase is ExecutionPhase.VERIFICATION_FAILED
+
+
 def test_dispatcher_rejects_unknown_or_malformed_operations() -> None:
     dispatcher = OperationDispatcher(FakeExecutor())
     with pytest.raises(ProtocolError):
@@ -489,3 +537,10 @@ class FailingInspectionExecutor(FakeExecutor):
             False,
             True,
         )
+
+
+class VisibilityMismatchExecutor:
+    executor_kind = "fake"
+
+    def set_visibility(self, visible: bool) -> ApplicationInfo:
+        return ApplicationInfo("SOLIDWORKS", "34.3.2", self.executor_kind, visible=False)

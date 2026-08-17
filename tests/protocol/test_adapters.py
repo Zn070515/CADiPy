@@ -65,6 +65,54 @@ def test_required_verification_failure_is_not_serialized_as_success() -> None:
     assert result["execution"]["phase"] == "verification_failed"
 
 
+def test_dimension_mismatch_is_serialized_as_verification_failure() -> None:
+    with CadipySession(executor_factory=DimensionMismatchExecutor) as session:
+        result = session.server.handle(
+            {
+                "protocol": 1,
+                "id": "dimension-mismatch",
+                "operation": "sketch.set_dimension",
+                "target": {"document_id": "doc-a"},
+                "params": {
+                    "sketch": {
+                        "id": "sketch-1",
+                        "document_id": "doc-a",
+                        "name": "Sketch1",
+                        "plane": "Front Plane",
+                    },
+                    "dimension": {
+                        "id": "dimension-1",
+                        "sketch_id": "sketch-1",
+                        "dimension_type": "horizontal_distance",
+                        "name": "D1@Sketch1",
+                        "value_mm": 100.0,
+                    },
+                    "value_mm": 100.0,
+                },
+            }
+        )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "verification_failed"
+    assert result["execution"]["phase"] == "verification_failed"
+
+
+def test_visibility_mismatch_is_serialized_as_verification_failure() -> None:
+    with CadipySession(executor_factory=VisibilityMismatchExecutor) as session:
+        result = session.server.handle(
+            {
+                "protocol": 1,
+                "id": "visibility-mismatch",
+                "operation": "application.set_visibility",
+                "params": {"visible": True},
+            }
+        )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "verification_failed"
+    assert result["execution"]["phase"] == "verification_failed"
+
+
 def test_session_adapters_route_concurrent_requests_through_one_host_thread() -> None:
     executor = _RecordingExecutor()
     audit = AuditRecorder()
@@ -177,3 +225,29 @@ class FailingInspectionExecutor(_FakeExecutor):
     def connect(self):
         self.thread_ids.append(threading.get_ident())
         return self.application_info()
+
+
+class DimensionMismatchExecutor(_FakeExecutor):
+    def list_documents(self):
+        from cadipy.backends.executor import DocumentHandle
+
+        return (DocumentHandle("doc-a", DocumentType.PART, "PartA"),)
+
+    def create_part(self):
+        from cadipy.backends.executor import DocumentHandle
+
+        return DocumentHandle("doc-a", DocumentType.PART, "PartA")
+
+    def set_dimension(self, *args):
+        from cadipy.domain.sketches import DimensionHandle, DimensionType
+
+        return DimensionHandle(
+            "dimension-1", "sketch-1", DimensionType.HORIZONTAL_DISTANCE, "D1@Sketch1", 120.0
+        )
+
+
+class VisibilityMismatchExecutor(_FakeExecutor):
+    def set_visibility(self, visible):
+        from cadipy.backends.executor import ApplicationInfo
+
+        return ApplicationInfo("SOLIDWORKS", "34.3.2", self.executor_kind, visible=False)

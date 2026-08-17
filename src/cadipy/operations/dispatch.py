@@ -74,7 +74,9 @@ class OperationDispatcher:
             data = self._invoke(operation, normalized, target)
             report = report.transition(ExecutionPhase.EXECUTED)
             inspection = _inspection_from_data(data)
-            verify_postconditions(spec.postconditions, data, inspection)
+            postcondition_data = dict(data)
+            postcondition_data["_params"] = normalized
+            verify_postconditions(spec.postconditions, postcondition_data, inspection)
             report = report.transition(ExecutionPhase.VERIFIED)
             report = report.transition(ExecutionPhase.COMMITTED)
             if self.audit_recorder is not None:
