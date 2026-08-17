@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from cadipy.backends.executor import SolidWorksExecutor
+    from cadipy.session import CadipySession
 
 
 def exposed_rpc_operations() -> tuple[str, ...]:
@@ -21,8 +22,17 @@ def exposed_rpc_operations() -> tuple[str, ...]:
 
 
 class ProtocolServer:
-    def __init__(self, dispatcher: OperationDispatcher) -> None:
-        self.dispatcher = dispatcher
+    def __init__(
+        self,
+        dispatcher: OperationDispatcher | None = None,
+        *,
+        session: CadipySession | None = None,
+    ) -> None:
+        if (dispatcher is None) == (session is None):
+            raise ValueError("provide exactly one dispatcher or session")
+        self.session = session
+        if dispatcher is not None:
+            self.dispatcher = dispatcher
 
     @classmethod
     def from_executor(cls, executor: SolidWorksExecutor) -> ProtocolServer:
@@ -30,7 +40,7 @@ class ProtocolServer:
 
     @classmethod
     def from_session(cls, session: Any) -> ProtocolServer:
-        return cls(session.dispatcher)
+        return cls(session=session)
 
     def handle(self, request: Mapping[str, Any]) -> dict[str, Any]:
         request_id = str(request.get("id", "request"))
@@ -42,6 +52,9 @@ class ProtocolServer:
                 ProtocolError("unsupported protocol version"),
             ).to_dict()
         try:
+            if self.session is not None:
+                return self.session.dispatch_request(request).to_dict()
+            assert self.dispatcher is not None
             return self.dispatcher.dispatch(request).to_dict()
         except Exception as exc:
             return OperationResult.failure(request_id, operation, exc).to_dict()

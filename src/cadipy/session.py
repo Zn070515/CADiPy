@@ -14,9 +14,10 @@ from cadipy.operations.dispatch import OperationDispatcher
 from cadipy.protocol.mcp import McpAdapter
 from cadipy.protocol.server import ProtocolServer
 from cadipy.runtime import DocumentRegistry
+from cadipy.runtime.host import StaExecutorHost
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from cadipy.protocol.result import OperationResult
 
@@ -31,21 +32,24 @@ class CadipySession:
         self,
         *,
         executor: SolidWorksExecutor | None = None,
+        executor_factory: Callable[[], SolidWorksExecutor] | None = None,
         connection_mode: ConnectionMode = "attach",
         visible: bool | None = None,
         audit_recorder: AuditRecorder | None = None,
     ) -> None:
-        self.executor = executor or PythonComSolidWorksExecutor()
+        if executor is not None and executor_factory is not None:
+            raise ValueError("provide executor or executor_factory, not both")
+        self._executor_factory = executor_factory or (
+            (lambda: executor) if executor is not None else PythonComSolidWorksExecutor
+        )
         self.connection_mode = connection_mode
         self.visible = visible
-        self.registry = DocumentRegistry()
-        self.audit_recorder = audit_recorder or AuditRecorder()
-        self.dispatcher = OperationDispatcher(
-            self.executor,
-            target_resolver=self._resolve_target,
-            audit_recorder=self.audit_recorder,
-        )
-        self.server = ProtocolServer(self.dispatcher)
+        self._audit_recorder = audit_recorder
+        self._executor: SolidWorksExecutor | None = None
+        self._registry: DocumentRegistry | None = None
+        self._dispatcher: OperationDispatcher | None = None
+        self._host = StaExecutorHost(self._create_executor)
+        self.server = ProtocolServer.from_session(self)
         self.mcp = McpAdapter(self.server)
         self._entered = False
         self._closed = False
@@ -54,19 +58,27 @@ class CadipySession:
         if self._closed:
             raise SessionClosedError("CADiPy session cannot be re-entered after exit")
         if not self._entered:
-            if self.connection_mode == "launch":
-                self.executor.launch(visible=True if self.visible is None else self.visible)
-            else:
-                self.executor.attach(visible=self.visible)
-            self._entered = True
+            try:
+                self._host.start()
+                self._host.submit(self._initialize_runtime)
+                self._host.submit(self._connect)
+                self._entered = True
+            except BaseException:
+                self._host.close()
+                self._closed = True
+                raise
         return self
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
         if self._entered:
-            self._closed = True
-            self.registry.clear()
-            self.executor.disconnect()
-            self._entered = False
+            try:
+                self._host.submit(self._cleanup_runtime)
+            finally:
+                try:
+                    self._host.close()
+                finally:
+                    self._closed = True
+                    self._entered = False
 
     def execute(
         self,
@@ -82,7 +94,7 @@ class CadipySession:
             request_target = {"document_id": target.id}
         else:
             request_target = target
-        return self.dispatcher.dispatch(
+        return self.dispatch_request(
             {
                 "id": request_id,
                 "operation": operation,
@@ -90,6 +102,10 @@ class CadipySession:
                 "target": request_target,
             }
         )
+
+    def dispatch_request(self, request: Mapping[str, Any]) -> OperationResult:
+        self._ensure_open()
+        return self._host.submit(lambda: self._dispatcher_or_raise().dispatch(request))
 
     def create_part(self) -> DocumentHandle:
         return _handle_from_data(self.execute("document.create_part").data)
@@ -145,8 +161,52 @@ class CadipySession:
         return self.execute("application.set_visibility", params={"visible": visible})
 
     def _resolve_target(self, binding: Any) -> DocumentHandle:
-        self.registry.reconcile(self.executor.list_documents())
-        return self.registry.resolve(binding)
+        executor = self._executor_or_raise()
+        registry = self._registry_or_raise()
+        registry.reconcile(executor.list_documents())
+        return registry.resolve(binding)
+
+    def _create_executor(self) -> SolidWorksExecutor:
+        executor = self._executor_factory()
+        if executor is None:
+            raise RuntimeError("executor factory returned no executor")
+        self._executor = executor
+        return executor
+
+    def _initialize_runtime(self) -> None:
+        self._registry = DocumentRegistry()
+        self._audit_recorder = self._audit_recorder or AuditRecorder()
+        self._dispatcher = OperationDispatcher(
+            self._executor_or_raise(),
+            target_resolver=self._resolve_target,
+            audit_recorder=self._audit_recorder,
+        )
+
+    def _connect(self) -> None:
+        executor = self._executor_or_raise()
+        if self.connection_mode == "launch":
+            executor.launch(visible=True if self.visible is None else self.visible)
+        else:
+            executor.attach(visible=self.visible)
+
+    def _cleanup_runtime(self) -> None:
+        if self._registry is not None:
+            self._registry.clear()
+
+    def _executor_or_raise(self) -> SolidWorksExecutor:
+        if self._executor is None:
+            raise SessionClosedError("CADiPy executor is not initialized")
+        return self._executor
+
+    def _dispatcher_or_raise(self) -> OperationDispatcher:
+        if self._dispatcher is None:
+            raise SessionClosedError("CADiPy dispatcher is not initialized")
+        return self._dispatcher
+
+    def _registry_or_raise(self) -> DocumentRegistry:
+        if self._registry is None:
+            raise SessionClosedError("CADiPy registry is not initialized")
+        return self._registry
 
     def _ensure_open(self) -> None:
         if not self._entered or self._closed:
