@@ -45,6 +45,88 @@ def test_host_constructs_executor_on_its_worker_thread() -> None:
         host.close(timeout=30.0)
 
 
+def test_host_pairs_apartment_hooks_on_worker_thread() -> None:
+    calls: list[tuple[str, int]] = []
+
+    def apartment_init() -> None:
+        calls.append(("init", threading.get_ident()))
+
+    def apartment_uninit() -> None:
+        calls.append(("uninit", threading.get_ident()))
+
+    def factory() -> RecordingExecutor:
+        calls.append(("factory", threading.get_ident()))
+        return RecordingExecutor()
+
+    host = StaExecutorHost(
+        factory,
+        apartment_init=apartment_init,
+        apartment_uninit=apartment_uninit,
+    )
+    host.start()
+    try:
+        command_thread = host.submit(threading.get_ident)
+    finally:
+        host.close(timeout=30.0)
+
+    assert calls == [
+        ("init", command_thread),
+        ("factory", command_thread),
+        ("uninit", command_thread),
+    ]
+
+
+def test_host_concurrent_start_calls_start_worker_once() -> None:
+    host = StaExecutorHost(
+        lambda: RecordingExecutor(), apartment_init=lambda: None, apartment_uninit=lambda: None
+    )
+    barrier = threading.Barrier(3)
+    errors: list[BaseException] = []
+
+    def start() -> None:
+        barrier.wait()
+        try:
+            host.start()
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=start) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=1.0)
+
+    try:
+        assert not errors
+        assert host.submit(lambda: "running") == "running"
+    finally:
+        host.close(timeout=30.0)
+
+
+def test_host_surfaces_disconnect_failure_and_preserves_failed_state() -> None:
+    cleanup_error = RuntimeError("disconnect failed")
+
+    class FailingExecutor(RecordingExecutor):
+        def disconnect(self) -> None:
+            raise cleanup_error
+
+    uninitialized = threading.Event()
+    host = StaExecutorHost(
+        lambda: FailingExecutor(),
+        apartment_init=lambda: None,
+        apartment_uninit=uninitialized.set,
+    )
+    host.start()
+
+    with pytest.raises(WorkerError, match="cleanup failed") as exc_info:
+        host.close(timeout=30.0)
+
+    assert host.state is HostState.FAILED
+    assert exc_info.value.__cause__ is cleanup_error
+    assert uninitialized.is_set()
+
+
 def test_host_rejects_commands_after_close() -> None:
     host = StaExecutorHost(lambda: RecordingExecutor())
     host.start()

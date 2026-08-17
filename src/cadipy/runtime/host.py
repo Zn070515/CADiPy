@@ -22,6 +22,7 @@ class HostState(str, Enum):
 
 ResultT = TypeVar("ResultT")
 Command = tuple[Callable[[], Any], Future[Any]]
+ApartmentHook = Callable[[], None]
 
 
 class StaExecutorHost:
@@ -31,15 +32,22 @@ class StaExecutorHost:
         self,
         executor_factory: Callable[[], Any],
         command_timeout: float | None = None,
+        *,
+        apartment_init: ApartmentHook | None = None,
+        apartment_uninit: ApartmentHook | None = None,
     ) -> None:
         self._executor_factory = executor_factory
         self._command_timeout = command_timeout
+        self._apartment_init = apartment_init or _initialize_sta
+        self._apartment_uninit = apartment_uninit or _uninitialize_sta
         self._commands: queue.Queue[Command | None] = queue.Queue()
         self._state = HostState.CREATED
         self._state_lock = threading.Lock()
         self._started = threading.Event()
         self._startup_error: BaseException | None = None
+        self._cleanup_error: WorkerError | None = None
         self._worker_ident: int | None = None
+        self._stop_enqueued = False
         self._worker = threading.Thread(target=self._run, name="cadipy-executor", daemon=True)
 
     @property
@@ -48,12 +56,24 @@ class StaExecutorHost:
             return self._state
 
     def start(self) -> None:
+        start_worker = False
         with self._state_lock:
             if self._state is HostState.RUNNING:
-                return
-            if self._state is not HostState.CREATED:
+                pass
+            elif self._state is HostState.CREATED:
+                self._state = HostState.RUNNING
+                start_worker = True
+            else:
                 raise SessionClosedError("executor host cannot be started in its current state")
-            self._worker.start()
+        if start_worker:
+            try:
+                self._worker.start()
+            except BaseException as exc:
+                with self._state_lock:
+                    self._startup_error = exc
+                    self._state = HostState.FAILED
+                    self._started.set()
+                raise
         self._started.wait()
         if self._startup_error is not None:
             raise self._startup_error
@@ -87,20 +107,25 @@ class StaExecutorHost:
             else:
                 worker = self._worker
                 self._state = self._state if self._state is HostState.FAILED else HostState.CLOSING
+            if not self._stop_enqueued and worker.is_alive():
                 self._commands.put(None)
+                self._stop_enqueued = True
         worker.join(timeout)
         if worker.is_alive():
             with self._state_lock:
                 self._state = HostState.FAILED
             raise TimeoutError("executor host did not close before the timeout")
+        if self._cleanup_error is not None:
+            raise self._cleanup_error
 
     def _run(self) -> None:
         self._worker_ident = threading.get_ident()
         executor: Any = None
+        apartment_initialized = False
         try:
+            self._apartment_init()
+            apartment_initialized = True
             executor = self._executor_factory()
-            with self._state_lock:
-                self._state = HostState.RUNNING
         except BaseException as exc:
             self._startup_error = exc
             with self._state_lock:
@@ -109,23 +134,19 @@ class StaExecutorHost:
             self._started.set()
 
         if executor is None:
+            if apartment_initialized:
+                self._uninitialize_apartment()
             return
 
+        try:
+            self._serve()
+        finally:
+            self._disconnect_and_uninitialize(executor)
+
+    def _serve(self) -> None:
         while True:
             item = self._commands.get()
             if item is None:
-                try:
-                    disconnect = getattr(executor, "disconnect", None)
-                    if callable(disconnect):
-                        disconnect()
-                except BaseException as exc:
-                    with self._state_lock:
-                        self._state = HostState.FAILED
-                    self._startup_error = exc
-                else:
-                    with self._state_lock:
-                        if self._state is not HostState.FAILED:
-                            self._state = HostState.CLOSED
                 return
 
             command, future = item
@@ -138,6 +159,38 @@ class StaExecutorHost:
             except BaseException as exc:
                 if not future.done():
                     future.set_exception(exc)
+
+    def _disconnect_and_uninitialize(self, executor: Any) -> None:
+        cleanup_cause: BaseException | None = None
+        try:
+            disconnect = getattr(executor, "disconnect", None)
+            if callable(disconnect):
+                disconnect()
+        except BaseException as exc:
+            cleanup_cause = exc
+        try:
+            self._apartment_uninit()
+        except BaseException as exc:
+            cleanup_cause = cleanup_cause or exc
+        if cleanup_cause is not None:
+            self._record_cleanup_failure(cleanup_cause)
+        else:
+            with self._state_lock:
+                if self._state is not HostState.FAILED:
+                    self._state = HostState.CLOSED
+
+    def _uninitialize_apartment(self) -> None:
+        try:
+            self._apartment_uninit()
+        except BaseException as exc:
+            self._record_cleanup_failure(exc)
+
+    def _record_cleanup_failure(self, cause: BaseException) -> None:
+        error = WorkerError("executor host cleanup failed")
+        error.__cause__ = cause
+        with self._state_lock:
+            self._cleanup_error = error
+            self._state = HostState.FAILED
 
     def _ensure_accepting(self) -> None:
         with self._state_lock:
@@ -153,3 +206,15 @@ class StaExecutorHost:
         with self._state_lock:
             if self._state is HostState.RUNNING:
                 self._state = HostState.FAILED
+
+
+def _initialize_sta() -> None:
+    import pythoncom
+
+    pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)
+
+
+def _uninitialize_sta() -> None:
+    import pythoncom
+
+    pythoncom.CoUninitialize()
