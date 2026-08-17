@@ -24,6 +24,22 @@ def test_rpc_and_mcp_adapters_share_dispatcher_and_serialized_result() -> None:
     assert rpc_result["data"]["executor"] == "fake"
 
 
+def test_protocol_failure_uses_additive_execution_result_field() -> None:
+    server = ProtocolServer.from_executor(_FakeExecutor())
+
+    result = server.handle(
+        {
+            "protocol": 99,
+            "id": "request-2",
+            "operation": "diagnostics.connect",
+        }
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "protocol"
+    assert result["execution"] is None
+
+
 class _FakeExecutor:
     executor_kind = "fake"
 

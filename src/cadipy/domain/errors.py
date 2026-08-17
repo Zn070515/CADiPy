@@ -79,7 +79,7 @@ class RebuildError(CadipyError):
 
 
 class VerificationError(CadipyError):
-    code = "verification"
+    code = "verification_failed"
 
 
 class TransactionError(CadipyError):

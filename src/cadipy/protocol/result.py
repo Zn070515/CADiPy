@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from cadipy.domain.errors import CadipyError
+
+if TYPE_CHECKING:
+    from cadipy.domain.execution import ExecutionReport
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,6 +18,7 @@ class OperationResult:
     operation: str
     data: dict[str, Any] | None = None
     error: dict[str, Any] | None = None
+    execution: ExecutionReport | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -24,10 +28,17 @@ class OperationResult:
             "ok": self.ok,
             "data": self.data,
             "error": self.error,
+            "execution": self.execution.to_dict() if self.execution is not None else None,
         }
 
     @classmethod
-    def failure(cls, request_id: str, operation: str, error: Exception) -> OperationResult:
+    def failure(
+        cls,
+        request_id: str,
+        operation: str,
+        error: Exception,
+        execution: ExecutionReport | None = None,
+    ) -> OperationResult:
         if isinstance(error, CadipyError):
             payload = {
                 "code": error.code,
@@ -42,4 +53,4 @@ class OperationResult:
                 "operation": operation,
                 "details": {},
             }
-        return cls(False, request_id, operation, error=payload)
+        return cls(False, request_id, operation, error=payload, execution=execution)
