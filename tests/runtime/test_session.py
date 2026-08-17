@@ -25,8 +25,15 @@ class FakeExecutor:
         return ApplicationInfo("SOLIDWORKS", "34.3.2", self.executor_kind)
 
 
-def test_session_shares_one_dispatcher_with_rpc_and_mcp() -> None:
-    executor = FakeExecutor()
+@pytest.fixture
+def session_executor() -> FakeExecutor:
+    return FakeExecutor()
+
+
+def test_session_shares_one_dispatcher_with_rpc_and_mcp(
+    session_executor: FakeExecutor,
+) -> None:
+    executor = session_executor
 
     with CadipySession(executor=executor, connection_mode="attach") as session:
         assert session.server.dispatcher is session.dispatcher

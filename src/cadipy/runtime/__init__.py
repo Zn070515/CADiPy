@@ -1,4 +1,4 @@
-"""Session-local live document registry and target resolution."""
+"""Session-local runtime services."""
 
 from __future__ import annotations
 
