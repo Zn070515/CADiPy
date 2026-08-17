@@ -11,7 +11,12 @@ from typing import TYPE_CHECKING, Any, cast
 from cadipy.audit.events import AuditEvent
 from cadipy.backends.executor import DocumentHandle, SketchHandle, SolidWorksExecutor
 from cadipy.domain.documents import DocumentType
-from cadipy.domain.errors import InvalidArgumentError, ProtocolError, TargetNotFoundError
+from cadipy.domain.errors import (
+    DocumentTypeError,
+    InvalidArgumentError,
+    ProtocolError,
+    TargetNotFoundError,
+)
 from cadipy.domain.sketches import (
     DimensionHandle,
     DimensionType,
@@ -24,6 +29,7 @@ from cadipy.protocol.result import OperationResult
 from cadipy.verification.postconditions import verify_rectangular_extrusion
 
 from .registry import OPERATION_REGISTRY, OpSpec
+from .schema import ParamSpec, validate_parameters
 
 if TYPE_CHECKING:
     from cadipy.audit.recorder import AuditRecorder
@@ -77,66 +83,9 @@ class OperationDispatcher:
         )
 
     def _validate_params(self, spec: OpSpec, params: Mapping[str, Any]) -> dict[str, Any]:
-        unknown = set(params) - set(spec.parameters)
-        if unknown:
-            raise InvalidArgumentError(
-                "operation contains unknown parameters",
-                operation=spec.name,
-                details={"unknown": sorted(unknown)},
-            )
-        normalized = dict(params)
-        for name, declaration in spec.parameters.items():
-            if declaration.get("required") and name not in normalized:
-                raise InvalidArgumentError(
-                    f"missing required parameter: {name}",
-                    operation=spec.name,
-                    details={"parameter": name},
-                )
-            if name not in normalized:
-                if "default" in declaration:
-                    normalized[name] = declaration["default"]
-                continue
-            value = normalized[name]
-            type_name = declaration.get("type")
-            if type_name == "number" and (
-                isinstance(value, bool) or not isinstance(value, (int, float))
-            ):
-                raise InvalidArgumentError(
-                    f"parameter {name} must be a number",
-                    operation=spec.name,
-                    details={"parameter": name},
-                )
-            if type_name in {"string", "path"} and not isinstance(value, str):
-                raise InvalidArgumentError(
-                    f"parameter {name} must be a string",
-                    operation=spec.name,
-                    details={"parameter": name},
-                )
-            if type_name == "integer" and (isinstance(value, bool) or not isinstance(value, int)):
-                raise InvalidArgumentError(
-                    f"parameter {name} must be an integer",
-                    operation=spec.name,
-                    details={"parameter": name},
-                )
-            if type_name == "object" and not isinstance(value, Mapping):
-                raise InvalidArgumentError(
-                    f"parameter {name} must be an object",
-                    operation=spec.name,
-                    details={"parameter": name},
-                )
-            if type_name == "array" and not isinstance(value, (list, tuple)):
-                raise InvalidArgumentError(
-                    f"parameter {name} must be an array",
-                    operation=spec.name,
-                    details={"parameter": name},
-                )
-            if type_name == "boolean" and not isinstance(value, bool):
-                raise InvalidArgumentError(
-                    f"parameter {name} must be a boolean",
-                    operation=spec.name,
-                    details={"parameter": name},
-                )
-        return normalized
+        return validate_parameters(
+            cast("Mapping[str, ParamSpec]", spec.parameters), params, operation=spec.name
+        )
 
     def _resolve_target(self, spec: OpSpec, target: Any) -> DocumentHandle | None:
         if target is None:
@@ -157,7 +106,20 @@ class OperationDispatcher:
             document_type=self._document_type(target.get("document_type"), spec.name),
             configuration=target.get("configuration"),
         )
-        return self.target_resolver(binding)
+        resolved = self.target_resolver(binding)
+        if (
+            spec.target_document_types
+            and resolved.document_type.value not in spec.target_document_types
+        ):
+            raise DocumentTypeError(
+                "target document type is not supported by this operation",
+                operation=spec.name,
+                details={
+                    "expected": list(spec.target_document_types),
+                    "actual": resolved.document_type.value,
+                },
+            )
+        return resolved
 
     @staticmethod
     def _document_type(value: Any, operation: str) -> DocumentType | None:

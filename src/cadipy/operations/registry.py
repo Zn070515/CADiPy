@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+from .schema import ParamSpec, PostconditionSpec
 
 
 @dataclass(frozen=True, slots=True)
@@ -12,9 +17,49 @@ class OpSpec:
     description: str
     mutating: bool
     target_required: bool
-    document_types: tuple[str, ...]
-    parameters: dict[str, dict[str, Any]]
-    postconditions: tuple[str, ...] = ()
+    target_document_types: tuple[str, ...] = ()
+    result_document_types: tuple[str, ...] = ()
+    parameters: Mapping[str, ParamSpec | Mapping[str, Any]] = field(default_factory=dict)
+    postconditions: tuple[PostconditionSpec | str, ...] = ()
+    document_types: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        legacy_types = self.document_types or ()
+        target_types = self.target_document_types
+        result_types = self.result_document_types
+        if not target_types and self.target_required:
+            target_types = legacy_types
+        if not result_types and not self.target_required:
+            result_types = legacy_types
+        object.__setattr__(self, "target_document_types", tuple(target_types))
+        object.__setattr__(self, "result_document_types", tuple(result_types))
+        object.__setattr__(
+            self,
+            "parameters",
+            {
+                name: declaration
+                if isinstance(declaration, ParamSpec)
+                else ParamSpec(
+                    type=declaration["type"],
+                    **{key: value for key, value in declaration.items() if key != "type"},
+                )
+                for name, declaration in dict(self.parameters).items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "postconditions",
+            tuple(
+                condition
+                if isinstance(condition, PostconditionSpec)
+                else PostconditionSpec(name=condition)
+                for condition in self.postconditions
+            ),
+        )
+
+    @property
+    def document_types_legacy(self) -> tuple[str, ...]:
+        return self.target_document_types or self.result_document_types
 
     @property
     def parameter_names(self) -> tuple[str, ...]:
@@ -26,9 +71,14 @@ class OpSpec:
             "description": self.description,
             "mutating": self.mutating,
             "target_required": self.target_required,
-            "document_types": list(self.document_types),
-            "parameters": self.parameters,
-            "postconditions": list(self.postconditions),
+            "target_document_types": list(self.target_document_types),
+            "result_document_types": list(self.result_document_types),
+            "parameters": {
+                name: cast("ParamSpec", value).to_dict() for name, value in self.parameters.items()
+            },
+            "postconditions": [
+                cast("PostconditionSpec", value).to_dict() for value in self.postconditions
+            ],
         }
 
 

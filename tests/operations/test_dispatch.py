@@ -19,7 +19,12 @@ from cadipy.backends.executor import (
     SketchHandle,
 )
 from cadipy.domain.documents import DocumentType
-from cadipy.domain.errors import InvalidArgumentError, ProtocolError, TargetNotFoundError
+from cadipy.domain.errors import (
+    DocumentTypeError,
+    InvalidArgumentError,
+    ProtocolError,
+    TargetNotFoundError,
+)
 from cadipy.domain.sketches import (
     DimensionHandle,
     DimensionInspection,
@@ -148,6 +153,23 @@ def test_mutating_existing_document_operation_requires_target_before_backend_cal
     with pytest.raises(TargetNotFoundError):
         OperationDispatcher(executor).dispatch(
             {"id": "request-1", "operation": "part.rebuild", "params": {}}
+        )
+    assert executor.calls == []
+
+
+def test_part_operation_rejects_assembly_target() -> None:
+    executor = FakeExecutor()
+    assembly = DocumentHandle("assembly-1", DocumentType.ASSEMBLY, "Assembly1")
+    dispatcher = OperationDispatcher(executor, target_resolver=lambda binding: assembly)
+
+    with pytest.raises(DocumentTypeError):
+        dispatcher.dispatch(
+            {
+                "id": "request-1",
+                "operation": "part.rebuild",
+                "params": {},
+                "target": {"document_id": assembly.id},
+            }
         )
     assert executor.calls == []
 
