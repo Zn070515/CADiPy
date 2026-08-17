@@ -23,6 +23,7 @@ nav:
       - 基准口径: benchmarks.md
       - 迁移记录: migration.md
       - 发布纪律: release.md
+      - 真机 CI: ci.md
       - 工程记录治理: engineering-records.md
   - English:
       - Home: index.en.md
@@ -35,4 +36,5 @@ nav:
       - Benchmarks: benchmarks.en.md
       - Migration: migration.en.md
       - Release: release.en.md
+      - Real SOLIDWORKS CI: ci.en.md
       - Engineering records: engineering-records.en.md

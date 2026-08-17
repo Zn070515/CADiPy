@@ -1,28 +1,109 @@
 name: SOLIDWORKS integration
 
 on:
+  workflow_call:
+    inputs:
+      install_from_wheel:
+        description: "Install the uploaded CADiPy wheel instead of syncing source."
+        type: boolean
+        required: false
+        default: false
+      dist_artifact:
+        description: "Artifact containing the wheel to install."
+        type: string
+        required: false
+        default: ""
   workflow_dispatch:
-  schedule:
-    - cron: "41 3 * * 1-5"
+    inputs:
+      install_from_wheel:
+        description: "Install a wheel artifact instead of syncing source."
+        type: boolean
+        required: false
+        default: false
+      dist_artifact:
+        description: "Artifact containing the wheel to install."
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
 jobs:
   real-solidworks:
-    runs-on: [self-hosted, windows, solidworks]
+    runs-on: [self-hosted, windows, x64, solidworks]
     timeout-minutes: 30
     env:
       CADIPY_REQUIRE_REAL_SOLIDWORKS: "1"
       PYTHONIOENCODING: utf-8
+      http_proxy: http://127.0.0.1:12334
+      https_proxy: http://127.0.0.1:12334
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
-          enable-cache: true
+          enable-cache: false
           cache-dependency-glob: uv.lock
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - name: Download distribution artifact
+        if: inputs.install_from_wheel
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.0
         with:
-          python-version: "3.12"
-      - run: uv sync --extra dev --extra solidworks
-      - run: uv run pytest tests/integration/solidworks -m real_solidworks --real-solidworks -q
+          name: ${{ inputs.dist_artifact }}
+          path: dist
+      - name: Install final wheel into clean environment
+        if: inputs.install_from_wheel
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          uv venv .venv-wheel --python 3.12
+          $wheels = @(Get-ChildItem -LiteralPath dist -Filter "cadipy-*.whl" -File)
+          if ($wheels.Count -ne 1) {
+            throw "Expected exactly one CADiPy wheel, found $($wheels.Count)."
+          }
+          uv pip install --python .venv-wheel "$($wheels[0].FullName)[solidworks]" pytest
+      - name: Sync source dependencies
+        if: ${{ !inputs.install_from_wheel }}
+        run: uv sync --extra dev --extra solidworks
+      - name: Reject pre-existing SOLIDWORKS processes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $existing = @(Get-Process -Name SLDWORKS -ErrorAction SilentlyContinue)
+          if ($existing.Count -gt 0) {
+            $ids = ($existing | ForEach-Object Id) -join ", "
+            throw "A pre-existing SOLIDWORKS process was detected (PID: $ids). CI will not attach to or terminate user-owned instances."
+          }
+      - name: Report strict SOLIDWORKS preflight
+        shell: pwsh
+        env:
+          CADIPY_INSTALL_FROM_WHEEL: ${{ inputs.install_from_wheel }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          Write-Host "Runner: $env:RUNNER_NAME"
+          Write-Host "OS: $([System.Environment]::OSVersion.VersionString)"
+          if ($env:CADIPY_INSTALL_FROM_WHEEL -eq "true") {
+            & .venv-wheel\Scripts\python.exe scripts\solidworks_preflight.py
+          } else {
+            uv run --no-sync python scripts\solidworks_preflight.py
+          }
+      - name: Run strict SOLIDWORKS integration contract
+        shell: pwsh
+        env:
+          CADIPY_INSTALL_FROM_WHEEL: ${{ inputs.install_from_wheel }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:CADIPY_INSTALL_FROM_WHEEL -eq "true") {
+            & .venv-wheel\Scripts\python.exe -m pytest tests/integration/solidworks -m real_solidworks --real-solidworks -q
+          } else {
+            uv run --no-sync pytest tests/integration/solidworks -m real_solidworks --real-solidworks -q
+          }
+      - name: Verify SOLIDWORKS cleanup
+        if: always()
+        shell: pwsh
+        run: |
+          Start-Sleep -Seconds 3
+          $remaining = @(Get-Process -Name SLDWORKS -ErrorAction SilentlyContinue)
+          if ($remaining.Count -gt 0) {
+            $ids = ($remaining | ForEach-Object Id) -join ", "
+            throw "SOLIDWORKS process remained after the CADiPy-owned integration run (PID: $ids). No process was terminated."
+          }
