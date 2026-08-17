@@ -29,6 +29,7 @@ class ApplicationInfo:
     executor: str
     connection_mode: str = "attach"
     owned: bool = False
+    visible: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,11 +114,13 @@ class SolidWorksExecutor(Protocol):
 
     executor_kind: str
 
-    def attach(self) -> ApplicationInfo: ...
+    def attach(self, *, visible: bool | None = None) -> ApplicationInfo: ...
 
-    def launch(self) -> ApplicationInfo: ...
+    def launch(self, *, visible: bool = True) -> ApplicationInfo: ...
 
     def connect(self) -> ApplicationInfo: ...
+
+    def set_visibility(self, visible: bool) -> ApplicationInfo: ...
 
     def application_info(self) -> ApplicationInfo: ...
 

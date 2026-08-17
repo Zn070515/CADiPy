@@ -97,16 +97,31 @@ class PythonComSolidWorksExecutor:
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
         self.disconnect()
 
-    def attach(self) -> ApplicationInfo:
-        return self._connect(application.attach_application, mode="attach", owned=False)
+    def attach(self, *, visible: bool | None = None) -> ApplicationInfo:
+        return self._connect(
+            application.attach_application,
+            mode="attach",
+            owned=False,
+            visible=visible,
+        )
 
-    def launch(self) -> ApplicationInfo:
-        return self._connect(application.launch_application, mode="launch", owned=True)
+    def launch(self, *, visible: bool = True) -> ApplicationInfo:
+        return self._connect(
+            application.launch_application,
+            mode="launch",
+            owned=True,
+            visible=visible,
+        )
 
     def connect(self) -> ApplicationInfo:
         """Backward-compatible alias for strict attach semantics."""
 
         return self.attach()
+
+    def set_visibility(self, visible: bool) -> ApplicationInfo:
+        app = self._require_application()
+        application.set_visibility(app, visible)
+        return self._info()
 
     def application_info(self) -> ApplicationInfo:
         self._require_application()
@@ -118,6 +133,7 @@ class PythonComSolidWorksExecutor:
         *,
         mode: str,
         owned: bool,
+        visible: bool | None,
     ) -> ApplicationInfo:
         if self._application is None:
             self._apartment.__enter__()
@@ -126,12 +142,14 @@ class PythonComSolidWorksExecutor:
             except Exception:
                 self._apartment.__exit__(None, None, None)
                 raise
+            if visible is not None:
+                application.set_visibility(self._application, visible)
         self._connection_mode = mode
         self._owns_application = owned
         return self._info()
 
     def _info(self) -> ApplicationInfo:
-        product, revision, executor = application.application_info(
+        product, revision, executor, visible = application.application_info(
             self._require_application(),
             executor=self.executor_kind,
         )
@@ -141,6 +159,7 @@ class PythonComSolidWorksExecutor:
             executor=executor,
             connection_mode=self._connection_mode,
             owned=self._owns_application,
+            visible=visible,
         )
 
     def disconnect(self) -> None:

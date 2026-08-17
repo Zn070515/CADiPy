@@ -36,7 +36,7 @@ class FakeWorkerExecutor:
 
     executor_kind = "csharp-worker"
 
-    def attach(self) -> ApplicationInfo:
+    def attach(self, *, visible: bool | None = None) -> ApplicationInfo:
         return ApplicationInfo(
             product="SOLIDWORKS",
             revision="34.3.2",
@@ -45,7 +45,7 @@ class FakeWorkerExecutor:
             owned=False,
         )
 
-    def launch(self) -> ApplicationInfo:
+    def launch(self, *, visible: bool = True) -> ApplicationInfo:
         return ApplicationInfo(
             product="SOLIDWORKS",
             revision="34.3.2",
@@ -56,6 +56,16 @@ class FakeWorkerExecutor:
 
     def connect(self) -> ApplicationInfo:
         return self.attach()
+
+    def set_visibility(self, visible: bool) -> ApplicationInfo:
+        return ApplicationInfo(
+            product="SOLIDWORKS",
+            revision="34.3.2",
+            executor=self.executor_kind,
+            connection_mode="attach",
+            owned=False,
+            visible=visible,
+        )
 
     def application_info(self) -> ApplicationInfo:
         return self.attach()

@@ -32,10 +32,12 @@ class CadipySession:
         *,
         executor: SolidWorksExecutor | None = None,
         connection_mode: ConnectionMode = "attach",
+        visible: bool | None = None,
         audit_recorder: AuditRecorder | None = None,
     ) -> None:
         self.executor = executor or PythonComSolidWorksExecutor()
         self.connection_mode = connection_mode
+        self.visible = visible
         self.registry = DocumentRegistry()
         self.audit_recorder = audit_recorder or AuditRecorder()
         self.dispatcher = OperationDispatcher(
@@ -53,9 +55,9 @@ class CadipySession:
             raise SessionClosedError("CADiPy session cannot be re-entered after exit")
         if not self._entered:
             if self.connection_mode == "launch":
-                self.executor.launch()
+                self.executor.launch(visible=True if self.visible is None else self.visible)
             else:
-                self.executor.attach()
+                self.executor.attach(visible=self.visible)
             self._entered = True
         return self
 
@@ -138,6 +140,9 @@ class CadipySession:
         target: Mapping[str, Any] | DocumentHandle,
     ) -> OperationResult:
         return self.execute("document.close", target=target)
+
+    def set_visibility(self, visible: bool) -> OperationResult:
+        return self.execute("application.set_visibility", params={"visible": visible})
 
     def _resolve_target(self, binding: Any) -> DocumentHandle:
         self.registry.reconcile(self.executor.list_documents())

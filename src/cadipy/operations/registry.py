@@ -47,7 +47,21 @@ OPERATION_REGISTRY: dict[str, OpSpec] = {
         mutating=True,
         target_required=False,
         document_types=(),
-        parameters={},
+        parameters={
+            "visible": {"type": "boolean", "default": True},
+        },
+        postconditions=("application.visible == visible",),
+    ),
+    "application.set_visibility": OpSpec(
+        name="application.set_visibility",
+        description="Set the visibility of the connected SOLIDWORKS application.",
+        mutating=True,
+        target_required=False,
+        document_types=(),
+        parameters={
+            "visible": {"type": "boolean", "required": True},
+        },
+        postconditions=("application.visible == visible",),
     ),
     "application.info": OpSpec(
         name="application.info",

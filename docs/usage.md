@@ -13,7 +13,7 @@ result = execute(
 
 执行结果区分 API 调用、rebuild、verification 和保存/重开证据。真实 CAD 状态以 `verification_report` 为准。
 
-持续操作同一个 SOLIDWORKS 工程时使用持久 session。`connect()` 严格 attach 到已运行实例；需要 CADiPy 创建并拥有新实例时显式使用 `launch()`。session 结束后其中的 `document_id` 失效，已保存文档应使用路径、标题、类型或 configuration 重新绑定。
+持续操作同一个 SOLIDWORKS 工程时使用持久 session。`connect()` 严格 attach 到已运行实例，默认保持其当前窗口可见性；需要 CADiPy 创建并拥有新实例时显式使用 `launch()`，默认显示窗口。自动化场景可使用 `launch(visible=False)`。session 结束后其中的 `document_id` 失效，已保存文档应使用路径、标题、类型或 configuration 重新绑定。
 
 ```python
 from cadipy import connect
@@ -23,6 +23,19 @@ with connect() as cad:
     cad.rebuild(target=part)
     inspection = cad.inspect(target=part)
 ```
+
+应用程序可见性是 application-level 契约，不涉及文档或模型实体可见性：
+
+```python
+from cadipy import launch
+
+with launch(visible=True) as cad:
+    part = cad.create_part()
+    cad.set_visibility(False)
+    cad.set_visibility(True)
+```
+
+`application.info` 返回当前 `visible` 状态；协议客户端也可调用 `application.set_visibility`。公共 API 不返回 SOLIDWORKS COM 对象。
 
 文档目标必须显式提供 `document_id`、`path`、`title`、`document_type` 或 `configuration` 中的至少一项。每个操作开始前只解析一次目标；SOLIDWORKS 当前 active document 改变不会把明确目标切换到另一文档。`document.list`、`document.active`、`document.open` 和 `document.close` 也通过同一 session registry 工作。
 

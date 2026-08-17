@@ -44,14 +44,19 @@ def execute(
 def connect(
     *,
     mode: ConnectionMode = "attach",
+    visible: bool | None = None,
     executor: SolidWorksExecutor | None = None,
 ) -> CadipySession:
     """Create a persistent session; application acquisition occurs on entry."""
 
-    return CadipySession(executor=executor, connection_mode=mode)
+    return CadipySession(executor=executor, connection_mode=mode, visible=visible)
 
 
-def launch(*, executor: SolidWorksExecutor | None = None) -> CadipySession:
+def launch(
+    *,
+    visible: bool = True,
+    executor: SolidWorksExecutor | None = None,
+) -> CadipySession:
     """Create a persistent session that explicitly owns a new application."""
 
-    return CadipySession(executor=executor, connection_mode="launch")
+    return CadipySession(executor=executor, connection_mode="launch", visible=visible)

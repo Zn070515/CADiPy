@@ -18,6 +18,7 @@
 ```text
 application.attach
 application.launch
+application.set_visibility
 application.info
 document.list
 document.active
@@ -25,4 +26,4 @@ document.open
 document.close
 ```
 
-目标对象使用 `document_id`、`path`、`title`、`document_type` 和 `configuration` 字段。`document_id` 只在创建它的 session 内有效；RPC/MCP 不接收或返回 SOLIDWORKS COM 对象。
+`application.launch` 的 `visible` 参数默认为 `true`；`application.set_visibility` 要求显式提供布尔值。`application.info` 返回当前 `visible` 状态。目标对象使用 `document_id`、`path`、`title`、`document_type` 和 `configuration` 字段。`document_id` 只在创建它的 session 内有效；RPC/MCP 不接收或返回 SOLIDWORKS COM 对象。

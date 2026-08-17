@@ -14,7 +14,7 @@ class FakeExecutor:
         self.connected = False
         self.disconnected = False
 
-    def attach(self) -> ApplicationInfo:
+    def attach(self, *, visible: bool | None = None) -> ApplicationInfo:
         self.connected = True
         return ApplicationInfo("SOLIDWORKS", "34.3.2", self.executor_kind)
 

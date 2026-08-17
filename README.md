@@ -43,7 +43,7 @@ assert result.ok
 assert result.data["verification"] == "passed"
 ```
 
-连续操作同一 SOLIDWORKS 文档时使用持久 session：`connect()` 严格连接已有实例，`launch()` 显式创建并拥有新实例。
+连续操作同一 SOLIDWORKS 文档时使用持久 session：`connect()` 严格连接已有实例并默认保持窗口状态，`launch()` 显式创建并拥有新实例且默认显示窗口；自动化场景可使用 `launch(visible=False)`。
 
 ```python
 from cadipy import connect

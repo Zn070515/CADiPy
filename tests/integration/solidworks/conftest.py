@@ -39,7 +39,7 @@ def solidworks_executor(request: pytest.FixtureRequest) -> Iterator[PythonComSol
 
     executor = PythonComSolidWorksExecutor()
     try:
-        info = executor.launch() if strict else executor.attach()
+        info = executor.launch(visible=False) if strict else executor.attach()
     except Exception as exc:
         executor.disconnect()
         _precondition_failure(
@@ -76,7 +76,11 @@ def solidworks_session(
         _precondition_failure(strict, "strict baseline requires Python 3.12")
 
     connection_mode = "launch" if solidworks_executor.application_info().owned else "attach"
-    session = CadipySession(executor=solidworks_executor, connection_mode=connection_mode)
+    session = CadipySession(
+        executor=solidworks_executor,
+        connection_mode=connection_mode,
+        visible=solidworks_executor.application_info().visible,
+    )
     try:
         session.__enter__()
         if solidworks_executor.application_info().revision != EXPECTED_REVISION:

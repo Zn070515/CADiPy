@@ -53,12 +53,23 @@ def exit_application(application: Any) -> None:
         ) from exc
 
 
-def application_info(application: Any, *, executor: str) -> tuple[str, str, str]:
+def set_visibility(application: Any, visible: bool) -> None:
+    try:
+        application.Visible = visible
+    except Exception as exc:
+        raise ComOperationError(
+            "SOLIDWORKS application visibility could not be changed",
+            operation="solidworks.application.set_visibility",
+        ) from exc
+
+
+def application_info(application: Any, *, executor: str) -> tuple[str, str, str, bool]:
     try:
         revision = str(application.RevisionNumber)
+        visible = bool(application.Visible)
     except Exception as exc:
         raise ComOperationError(
             "SOLIDWORKS revision could not be read",
             operation="solidworks.connect",
         ) from exc
-    return "SOLIDWORKS", revision, executor
+    return "SOLIDWORKS", revision, executor, visible

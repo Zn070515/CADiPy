@@ -6,6 +6,7 @@
 
 - `application.attach`
 - `application.launch`
+- `application.set_visibility`
 - `application.info`
 - `diagnostics.connect`
 - `document.create_part`
@@ -25,6 +26,6 @@
 
 ## 持久 session
 
-`cadipy.connect()` 返回 `CadipySession`，进入上下文时 attach 到已有 SOLIDWORKS 实例；`cadipy.launch()` 返回显式拥有新实例的 session。session 同时拥有 executor、target resolver、dispatcher 和 audit recorder。`create_part()`、`list_documents()`、`active_document()`、`open()`、`inspect()`、`rebuild()` 和 `close()` 都通过 registry 操作，不公开 COM 对象。
+`cadipy.connect()` 返回 `CadipySession`，进入上下文时 attach 到已有 SOLIDWORKS 实例并默认保持其可见性；`cadipy.launch()` 返回显式拥有新实例的 session，默认显示窗口，可用 `visible=False` 隐藏。session 同时拥有 executor、target resolver、dispatcher 和 audit recorder。`create_part()`、`list_documents()`、`active_document()`、`open()`、`inspect()`、`rebuild()`、`close()` 和 `set_visibility()` 都通过 registry 操作，不公开 COM 对象。`application.info` 报告当前 `visible` 状态。
 
 草图操作使用可序列化的 `SketchHandle`、`SketchEntityHandle`、`RelationHandle` 和 `DimensionHandle`。实体通过 SOLIDWORKS persistent reference 在 rebuild 与保存/重开后重新解析，并校验其属于请求的 sketch；尺寸使用带 sketch 作用域的 SOLIDWORKS 参数名并保留 `*_mm` 工程单位。引用失效时返回稳定的 `entity_reference_invalid` 错误，不按实体顺序或当前选择猜测替代对象。

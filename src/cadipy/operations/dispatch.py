@@ -186,7 +186,9 @@ class OperationDispatcher:
         if operation == "application.attach":
             return _dict(self.executor.attach())
         if operation == "application.launch":
-            return _dict(self.executor.launch())
+            return _dict(self.executor.launch(visible=params["visible"]))
+        if operation == "application.set_visibility":
+            return _dict(self.executor.set_visibility(params["visible"]))
         if operation == "application.info":
             return _dict(self.executor.application_info())
         if operation == "diagnostics.connect":
