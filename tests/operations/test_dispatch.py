@@ -144,3 +144,43 @@ def test_dispatcher_records_public_audit_evidence() -> None:
 
     assert result.ok is True
     assert recorder.to_list()[0]["executor_kind"] == "fake"
+
+
+def test_dispatcher_handles_document_lifecycle_operations_from_one_registry() -> None:
+    executor = LifecycleFakeExecutor()
+    target = DocumentHandle("doc-a", DocumentType.PART, "PartA")
+    dispatcher = OperationDispatcher(executor, target_resolver=lambda binding: target)
+
+    listed = dispatcher.dispatch(
+        {"id": "list-1", "operation": "document.list", "params": {}}
+    )
+    closed = dispatcher.dispatch(
+        {
+            "id": "close-1",
+            "operation": "document.close",
+            "target": {"document_id": "doc-a"},
+            "params": {},
+        }
+    )
+
+    assert listed.data["documents"][0]["id"] == "doc-a"
+    assert closed.ok is True
+    assert executor.closed_ids == ["doc-a"]
+
+
+class LifecycleFakeExecutor(FakeExecutor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.closed_ids: list[str] = []
+
+    def list_documents(self) -> tuple[DocumentHandle, ...]:
+        self.calls.append("list_documents")
+        return (DocumentHandle("doc-a", DocumentType.PART, "PartA"),)
+
+    def active_document(self) -> DocumentHandle:
+        self.calls.append("active_document")
+        return DocumentHandle("doc-a", DocumentType.PART, "PartA", active=True)
+
+    def close(self, document: DocumentHandle) -> None:
+        self.calls.append("close")
+        self.closed_ids.append(document.id)

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, cast
 from cadipy.audit.events import AuditEvent
 from cadipy.backends.executor import DocumentHandle, SolidWorksExecutor
 from cadipy.domain.errors import InvalidArgumentError, ProtocolError, TargetNotFoundError
+from cadipy.domain.documents import DocumentType
 from cadipy.domain.targets import TargetBinding
 from cadipy.protocol.result import OperationResult
 from cadipy.verification.postconditions import verify_rectangular_extrusion
@@ -122,9 +123,28 @@ class OperationDispatcher:
             document_id=target.get("document_id"),
             path=Path(target["path"]) if target.get("path") else None,
             title=target.get("title"),
+            document_type=self._document_type(target.get("document_type"), spec.name),
             configuration=target.get("configuration"),
         )
         return self.target_resolver(binding)
+
+    @staticmethod
+    def _document_type(value: Any, operation: str) -> DocumentType | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise InvalidArgumentError(
+                "target document_type must be a string",
+                operation=operation,
+            )
+        try:
+            return DocumentType(value)
+        except ValueError as exc:
+            raise InvalidArgumentError(
+                "target document_type is not supported",
+                operation=operation,
+                details={"document_type": value},
+            ) from exc
 
     def _invoke(
         self,
@@ -132,10 +152,30 @@ class OperationDispatcher:
         params: dict[str, Any],
         target: DocumentHandle | None,
     ) -> dict[str, Any]:
+        if operation == "application.attach":
+            return _dict(self.executor.attach())
+        if operation == "application.launch":
+            return _dict(self.executor.launch())
+        if operation == "application.info":
+            return _dict(self.executor.application_info())
         if operation == "diagnostics.connect":
             return _dict(self.executor.connect())
         if operation == "document.create_part":
             return _handle_dict(self.executor.create_part())
+        if operation == "document.list":
+            return {"documents": [_handle_dict(item) for item in self.executor.list_documents()]}
+        if operation == "document.active":
+            active = self.executor.active_document()
+            return {"document": _handle_dict(active) if active is not None else None}
+        if operation == "document.open":
+            document_type = DocumentType(params["document_type"])
+            return _handle_dict(
+                self.executor.open_document(Path(params["path"]), document_type)
+            )
+        if operation == "document.close":
+            assert target is not None
+            self.executor.close(target)
+            return {"closed_document_id": target.id}
         if operation == "document.inspect":
             assert target is not None
             return _dict(self.executor.inspect_document(target))

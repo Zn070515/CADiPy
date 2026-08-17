@@ -33,6 +33,30 @@ class OpSpec:
 
 
 OPERATION_REGISTRY: dict[str, OpSpec] = {
+    "application.attach": OpSpec(
+        name="application.attach",
+        description="Attach to an already-running SOLIDWORKS application.",
+        mutating=False,
+        target_required=False,
+        document_types=(),
+        parameters={},
+    ),
+    "application.launch": OpSpec(
+        name="application.launch",
+        description="Launch a new owned SOLIDWORKS application instance.",
+        mutating=True,
+        target_required=False,
+        document_types=(),
+        parameters={},
+    ),
+    "application.info": OpSpec(
+        name="application.info",
+        description="Report the connected SOLIDWORKS application.",
+        mutating=False,
+        target_required=False,
+        document_types=(),
+        parameters={},
+    ),
     "diagnostics.connect": OpSpec(
         name="diagnostics.connect",
         description="Report the connected SOLIDWORKS execution backend.",
@@ -47,6 +71,45 @@ OPERATION_REGISTRY: dict[str, OpSpec] = {
         mutating=True,
         target_required=False,
         document_types=("part",),
+        parameters={},
+    ),
+    "document.list": OpSpec(
+        name="document.list",
+        description="List documents currently open in SOLIDWORKS.",
+        mutating=False,
+        target_required=False,
+        document_types=(),
+        parameters={},
+    ),
+    "document.active": OpSpec(
+        name="document.active",
+        description="Report the currently active SOLIDWORKS document.",
+        mutating=False,
+        target_required=False,
+        document_types=(),
+        parameters={},
+    ),
+    "document.open": OpSpec(
+        name="document.open",
+        description="Open and register a SOLIDWORKS Part document by path.",
+        mutating=True,
+        target_required=False,
+        document_types=("part",),
+        parameters={
+            "document_type": {
+                "type": "string",
+                "required": False,
+                "default": "part",
+            },
+            "path": {"type": "path", "required": True},
+        },
+    ),
+    "document.close": OpSpec(
+        name="document.close",
+        description="Close one explicitly bound SOLIDWORKS document.",
+        mutating=True,
+        target_required=True,
+        document_types=("part", "assembly", "drawing"),
         parameters={},
     ),
     "document.inspect": OpSpec(
