@@ -1,2 +1,6 @@
 config-variables:
   - CADIPY_REQUIRE_REAL_SOLIDWORKS
+
+self-hosted-runner:
+  labels:
+    - solidworks
