@@ -49,9 +49,9 @@ Conceptual interface:
 
 ```python
 class ExecutorHost(Protocol):
-    def start(self, initialize: Callable[[], None]) -> None: ...
-    def submit(self, command: Callable[[], T]) -> T: ...
-    def close(self) -> None: ...
+    def start(self) -> None: ...
+    def submit(self, command: Callable[[], T], *, timeout: float | None = None) -> T: ...
+    def close(self, *, timeout: float) -> None: ...
 ```
 
 The concrete host may use `queue.Queue`, a worker `Thread`, and a completion
@@ -60,12 +60,22 @@ submitted command runs to completion before the next command begins. The
 synchronous Python API waits for the command result, preserving its current
 call style while making execution serialized.
 
-For the Python COM backend, host startup constructs or activates the executor
-on the worker thread and initializes its COM apartment there. Attach/launch,
-all executor calls, and disconnect run on that same thread. The COM apartment
-must remain initialized for the lifetime of the worker and be uninitialized
-only after disconnect has completed. The host must never return an executor,
-COM reference, or backend-owned registry to a caller.
+For the Python COM backend, production session construction stores an executor
+factory; the factory constructs the executor on the worker thread after the
+STA has started. Test sessions may provide a preconstructed semantic fake, but
+it must not acquire COM before the host starts. Attach/launch, all executor
+calls, and disconnect run on the same worker thread. The COM apartment must
+remain initialized for the lifetime of the worker and be uninitialized only
+after disconnect has completed. The host must never return an executor, COM
+reference, or backend-owned registry to a caller.
+
+The host also owns the mutable execution state: `DocumentRegistry`, the
+dispatcher instance, and the audit recorder used by that dispatcher are
+created or bound during host startup and accessed only by host commands. The
+RPC and MCP adapters submit through the session/host façade; they do not retain
+a dispatcher reference that can be called directly from a transport thread.
+Any compatibility attribute exposing an executor must be a semantic proxy and
+must not expose the live backend instance.
 
 `CadipySession.__enter__`, `execute`, and `__exit__` become host operations:
 
@@ -75,6 +85,16 @@ execute -> enqueue dispatcher.dispatch -> return serializable result
 exit   -> enqueue disconnect -> stop and join host
 ```
 
+Normal close transitions the host to `closing`, rejects new submissions,
+places a sentinel after already accepted commands, runs disconnect before the
+sentinel, and joins the worker. If the host is already `failed`, pending
+commands are rejected and the host attempts disconnect once on the worker
+before joining. `CadipySession.__exit__` performs this sequence in `finally`,
+so a dispatcher or disconnect exception cannot skip host shutdown. A
+Python-COM executor exits SOLIDWORKS only when its ownership flag is true;
+disconnecting from a user-owned application releases CADiPy's references but
+does not close or terminate that application.
+
 If a command is submitted from the host thread itself, the host may execute it
 directly to avoid self-deadlock. This is an internal re-entrancy rule only; it
 does not permit public callers to obtain COM objects.
@@ -83,7 +103,13 @@ Host lifecycle states are `created`, `running`, `closing`, `closed`, and
 `failed`. A failed or closed host rejects new commands with a stable
 `SessionClosedError` or `WorkerError`; it never silently starts a second
 executor. Shutdown joins the worker and reports a failure if the worker cannot
-terminate within the configured bounded timeout.
+terminate within the configured bounded timeout; the initial default for host
+shutdown is 30 seconds. A command timeout does not
+kill a Python thread or a COM call. Instead, the caller receives `WorkerError`,
+the host enters `failed`, queued commands are rejected, and the host attempts
+an orderly shutdown. The session must be closed/reconnected before any further
+mutation. This prevents a caller from assuming that a timed-out command did
+not mutate the model.
 
 The host is deliberately expressed in terms of an executor port rather than
 Python COM details. A future C# worker host can satisfy the same semantic
@@ -121,6 +147,7 @@ class ParamSpec:
 class PostconditionSpec:
     name: str
     required: bool = True
+    verifier: str | None = None
 
 @dataclass(frozen=True, slots=True)
 class OpSpec:
@@ -141,6 +168,12 @@ remains a backend concern.
 
 The schema is authoritative for registry serialization, CLI/RPC/MCP exposure,
 and runtime validation. No adapter may reconstruct a second parameter schema.
+
+The verification layer owns a registry from `PostconditionSpec.verifier` (or
+the postcondition name when omitted) to a pure verifier callable. The callable
+receives serialized operation data and semantic inspection values; it never
+receives a COM object. An unknown verifier is a contract/configuration error
+before the operation is allowed to report success.
 
 After a target is resolved, the dispatcher checks the resolved
 `DocumentHandle.document_type` against `OpSpec.target_document_types`. An
@@ -181,6 +214,50 @@ rollback_attempted
 rolled_back | rollback_failed | state_uncertain
 ```
 
+The lifecycle is represented by a serializable `ExecutionReport` attached to
+the operation result or its failure payload:
+
+```python
+class ExecutionPhase(str, Enum):
+    RECEIVED = "received"
+    VALIDATED = "validated"
+    TARGET_RESOLVED = "target_resolved"
+    EXECUTED = "executed"
+    REBUILT = "rebuilt"
+    VERIFIED = "verified"
+    COMMITTED = "committed"
+    VALIDATION_FAILED = "validation_failed"
+    TARGET_FAILED = "target_failed"
+    EXECUTION_FAILED = "execution_failed"
+    REBUILD_FAILED = "rebuild_failed"
+    VERIFICATION_FAILED = "verification_failed"
+    ROLLBACK_ATTEMPTED = "rollback_attempted"
+    ROLLED_BACK = "rolled_back"
+    ROLLBACK_FAILED = "rollback_failed"
+    STATE_UNCERTAIN = "state_uncertain"
+
+@dataclass(frozen=True, slots=True)
+class ExecutionReport:
+    phase: ExecutionPhase
+    state_certainty: Literal["certain", "uncertain"]
+    rollback_status: Literal["not_required", "not_attempted", "rolled_back",
+                             "rollback_failed"]
+```
+
+Successful operations end with `phase="committed"` and
+`state_certainty="certain"`. Verification, rebuild, or execution failures
+carry the last completed phase and rollback status. A timeout or ambiguous
+rollback carries `state_certainty="uncertain"`; adapters must not reduce this
+to a generic successful result. The existing serialized result keys remain
+compatible, with the execution report added as a structured field rather than
+encoded in a free-form message.
+
+The additive execution field is included in the existing protocol version 1
+schema and is covered by the existing schema-consistency tests. Existing
+consumers that ignore unknown response fields remain valid; adapters must not
+create a second result shape. A future incompatible result change requires a
+new protocol version rather than silently changing version 1 semantics.
+
 An operation with a required postcondition can never produce a successful
 `OperationResult`. A verification failure raises/serializes
 `VerificationError` with the stable code `verification_failed`, and protocol
@@ -198,6 +275,18 @@ Introduce an internal `MutationScope` around composite mutating operations. It
 captures the resolved target identity and operation state, starts a backend
 undo recording when the executor capability supports it, and owns the
 commit/rollback decision.
+
+Before the first mutation, the scope captures a semantic `MutationSnapshot`:
+
+* for an existing target, the stable document identity, dirty/save state, and
+  the backend's available observable model fingerprint;
+* for a target created inside the scope, an explicit `created_resource` marker
+  and the owned document handle to close if rollback is required.
+
+The initial rectangular composite uses the second form because it creates its
+Part inside the operation. Subsequent P1.3 mutation handlers use the first form
+only when the backend can prove a useful pre-mutation inspection. A snapshot is an
+observation boundary, not a promise that SOLIDWORKS has database-style undo.
 
 The scope interface is semantic:
 
@@ -218,10 +307,22 @@ the backend can provide a reliable observation, and reports one of:
 * `rollback_failed`: rollback was attempted but did not complete;
 * `state_uncertain`: the call or rollback result cannot prove the model state.
 
+The backend capability seam exposes semantic actions such as
+`begin_mutation`, `commit_mutation`, `rollback_mutation`, and
+`verify_rollback`. The Python COM implementation may map these actions to
+SOLIDWORKS undo recording or owned-document cleanup, but those COM method
+names do not appear in the domain or protocol contract.
+
 This is not advertised as ACID or crash-safe transactionality. A COM process
 failure, timeout, or ambiguous undo result must stop subsequent mutation in the
 session until the session is closed/reconnected. Automatic retry of a mutation
 with uncertain state is forbidden.
+
+There is no mid-command cancellation contract in this stage. A caller may
+stop waiting for a result, but the host cannot safely interrupt a running COM
+call; it must treat that command as potentially mutating, transition to
+`failed`/`state_uncertain`, and reject subsequent mutation until cleanup and
+reconnection.
 
 The initial implementation applies the scope to the existing rectangular
 extrusion composite and provides a backend capability seam for SOLIDWORKS undo
@@ -242,6 +343,8 @@ transactional.
   those stages.
 * The existing 100×60×3 mm real-SOLIDWORKS round-trip fixture remains a
   required regression contract and must execute through the STA host.
+* Python 3.10–3.13 portable compatibility remains required; the host and
+  schema use only the standard library in this stage.
 
 ## Testing and acceptance evidence
 
@@ -271,8 +374,14 @@ The strict self-hosted suite must continue to run with
 * concurrent requests are serialized while operating on the requested target;
 * the 100×60×3 mm round-trip contract passes through the host;
 * a deliberately failed verification is reported as an operation failure;
-* an owned launched instance is cleaned up, while a user-owned instance is not
-  terminated by CADiPy.
+* an owned launched instance is cleaned up, while an attached user-owned
+  instance created inside the isolated test fixture remains running after
+  CADiPy disconnects.
+
+The workflow preflight still rejects an instance that predates the job, so the
+user-owned lifecycle test must create its unowned/attached application after
+preflight and clean it up in its own test fixture. It must not weaken the
+preflight or kill arbitrary pre-existing SOLIDWORKS processes.
 
 The normal portable suite may use fake executors for host and state-machine
 tests. It must not use mocks to claim the real-SOLIDWORKS contract passed.
