@@ -15,6 +15,7 @@ class ExecutionPhase(str, Enum):
     REBUILT = "rebuilt"
     VERIFIED = "verified"
     COMMITTED = "committed"
+    VERIFICATION_FAILED = "verification_failed"
     FAILED = "failed"
 
 
@@ -30,11 +31,21 @@ _ALLOWED_TRANSITIONS: dict[ExecutionPhase, frozenset[ExecutionPhase]] = {
     ExecutionPhase.VALIDATED: frozenset({ExecutionPhase.TARGET_RESOLVED, ExecutionPhase.FAILED}),
     ExecutionPhase.TARGET_RESOLVED: frozenset({ExecutionPhase.EXECUTED, ExecutionPhase.FAILED}),
     ExecutionPhase.EXECUTED: frozenset(
-        {ExecutionPhase.REBUILT, ExecutionPhase.VERIFIED, ExecutionPhase.FAILED}
+        {
+            ExecutionPhase.REBUILT,
+            ExecutionPhase.VERIFIED,
+            ExecutionPhase.VERIFICATION_FAILED,
+            ExecutionPhase.FAILED,
+        }
     ),
-    ExecutionPhase.REBUILT: frozenset({ExecutionPhase.VERIFIED, ExecutionPhase.FAILED}),
-    ExecutionPhase.VERIFIED: frozenset({ExecutionPhase.COMMITTED, ExecutionPhase.FAILED}),
+    ExecutionPhase.REBUILT: frozenset(
+        {ExecutionPhase.VERIFIED, ExecutionPhase.VERIFICATION_FAILED, ExecutionPhase.FAILED}
+    ),
+    ExecutionPhase.VERIFIED: frozenset(
+        {ExecutionPhase.COMMITTED, ExecutionPhase.VERIFICATION_FAILED, ExecutionPhase.FAILED}
+    ),
     ExecutionPhase.COMMITTED: frozenset(),
+    ExecutionPhase.VERIFICATION_FAILED: frozenset(),
     ExecutionPhase.FAILED: frozenset(),
 }
 

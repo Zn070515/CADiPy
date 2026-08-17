@@ -39,6 +39,7 @@ class OperationResult:
         error: Exception,
         execution: ExecutionReport | None = None,
     ) -> OperationResult:
+        execution = execution or getattr(error, "execution", None)
         if isinstance(error, CadipyError):
             payload = {
                 "code": error.code,

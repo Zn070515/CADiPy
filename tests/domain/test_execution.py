@@ -38,6 +38,7 @@ def test_execution_phase_values_are_exact_protocol_values() -> None:
         "rebuilt",
         "verified",
         "committed",
+        "verification_failed",
         "failed",
     )
 

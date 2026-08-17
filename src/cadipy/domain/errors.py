@@ -20,6 +20,7 @@ class CadipyError(Exception):
         super().__init__(message)
         self.operation = operation
         self.details = details or {}
+        self.execution = None
 
 
 class SessionClosedError(CadipyError):

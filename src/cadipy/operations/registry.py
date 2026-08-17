@@ -324,6 +324,7 @@ OPERATION_REGISTRY: dict[str, OpSpec] = {
             PostconditionSpec(name="document_is_part"),
             PostconditionSpec(name="rebuild_succeeded"),
             PostconditionSpec(name="feature_exists"),
+            PostconditionSpec(name="rectangular_extrusion"),
         ),
         target_document_types=(),
         result_document_types=("part",),

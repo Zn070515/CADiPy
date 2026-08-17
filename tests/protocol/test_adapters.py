@@ -5,6 +5,8 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 
 from cadipy.audit.recorder import AuditRecorder
+from cadipy.backends.executor import DocumentInspection
+from cadipy.domain.documents import DocumentType
 from cadipy.protocol.client import ProtocolClient
 from cadipy.protocol.mcp import McpAdapter
 from cadipy.protocol.server import ProtocolServer
@@ -45,6 +47,22 @@ def test_protocol_failure_uses_additive_execution_result_field() -> None:
     assert result["ok"] is False
     assert result["error"]["code"] == "protocol"
     assert result["execution"] is None
+
+
+def test_required_verification_failure_is_not_serialized_as_success() -> None:
+    with CadipySession(executor_factory=FailingInspectionExecutor) as session:
+        result = session.server.handle(
+            {
+                "protocol": 1,
+                "id": "request-verification-failure",
+                "operation": "part.create_rectangular_extrude",
+                "params": {"width_mm": 100.0, "height_mm": 60.0, "depth_mm": 3.0},
+            }
+        )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "verification_failed"
+    assert result["execution"]["phase"] == "verification_failed"
 
 
 def test_session_adapters_route_concurrent_requests_through_one_host_thread() -> None:
@@ -111,6 +129,50 @@ class _RecordingExecutor(_FakeExecutor):
     def attach(self, *, visible=None):
         self.thread_ids.append(threading.get_ident())
         return self.application_info()
+
+
+class FailingInspectionExecutor(_FakeExecutor):
+    def create_part(self):
+        from cadipy.backends.executor import DocumentHandle
+
+        return DocumentHandle("doc-1", DocumentType.PART, "Part1")
+
+    def create_sketch(self, document, plane):
+        from cadipy.backends.executor import SketchHandle
+
+        return SketchHandle("sketch-1", document.id, "Sketch1", plane)
+
+    def add_rectangle(self, sketch, width_mm, height_mm):
+        from cadipy.backends.executor import GeometryHandle
+
+        return GeometryHandle("geometry-1", sketch.id, width_mm, height_mm)
+
+    def extrude(self, document, sketch, depth_mm):
+        from cadipy.backends.executor import FeatureHandle
+
+        return FeatureHandle("feature-1", document.id, "Boss-Extrude1", "extrusion", depth_mm)
+
+    def rebuild(self, document):
+        from cadipy.backends.executor import RebuildReport
+
+        return RebuildReport(True)
+
+    def inspect_document(self, document):
+        return DocumentInspection(
+            document.id,
+            DocumentType.PART,
+            None,
+            document.title,
+            ("Sketch1",),
+            ("Boss-Extrude1",),
+            (0.0, 0.0, 0.0, 100.0, 60.0, 2.5),
+            1,
+            100.0,
+            60.0,
+            2.5,
+            False,
+            True,
+        )
 
     def connect(self):
         self.thread_ids.append(threading.get_ident())

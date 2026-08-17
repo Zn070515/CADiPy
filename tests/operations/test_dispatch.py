@@ -24,7 +24,9 @@ from cadipy.domain.errors import (
     InvalidArgumentError,
     ProtocolError,
     TargetNotFoundError,
+    VerificationError,
 )
+from cadipy.domain.execution import ExecutionPhase
 from cadipy.domain.sketches import (
     DimensionHandle,
     DimensionInspection,
@@ -114,6 +116,8 @@ def test_dispatcher_executes_geometry_operation_through_the_port() -> None:
     )
 
     assert result.ok is True
+    assert result.execution is not None
+    assert result.execution.phase is ExecutionPhase.COMMITTED
     assert result.data["verification"] == "passed"
     assert executor.calls == [
         "create_part",
@@ -123,6 +127,22 @@ def test_dispatcher_executes_geometry_operation_through_the_port() -> None:
         "rebuild",
         "inspect_document",
     ]
+
+
+def test_required_verification_failure_raises_with_failed_execution_report() -> None:
+    executor = FailingInspectionExecutor()
+
+    with pytest.raises(VerificationError) as caught:
+        OperationDispatcher(executor).dispatch(
+            {
+                "id": "request-failure",
+                "operation": "part.create_rectangular_extrude",
+                "params": {"width_mm": 100.0, "height_mm": 60.0, "depth_mm": 3.0},
+            }
+        )
+
+    assert caught.value.execution.phase is ExecutionPhase.VERIFICATION_FAILED
+    assert caught.value.execution.state_certainty == "uncertain"
 
 
 def test_dispatcher_rejects_unknown_or_malformed_operations() -> None:
@@ -450,3 +470,22 @@ class LifecycleFakeExecutor(FakeExecutor):
     def close(self, document: DocumentHandle) -> None:
         self.calls.append("close")
         self.closed_ids.append(document.id)
+
+
+class FailingInspectionExecutor(FakeExecutor):
+    def inspect_document(self, document: DocumentHandle) -> DocumentInspection:
+        return DocumentInspection(
+            document.id,
+            DocumentType.PART,
+            None,
+            document.title,
+            ("Sketch1",),
+            ("Boss-Extrude1",),
+            (0.0, 0.0, 0.0, 100.0, 60.0, 2.5),
+            1,
+            100.0,
+            60.0,
+            2.5,
+            False,
+            True,
+        )

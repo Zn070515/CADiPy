@@ -16,7 +16,9 @@ from cadipy.domain.errors import (
     InvalidArgumentError,
     ProtocolError,
     TargetNotFoundError,
+    VerificationError,
 )
+from cadipy.domain.execution import ExecutionPhase, ExecutionReport, RollbackStatus
 from cadipy.domain.sketches import (
     DimensionHandle,
     DimensionType,
@@ -27,6 +29,7 @@ from cadipy.domain.sketches import (
 from cadipy.domain.targets import TargetBinding
 from cadipy.protocol.result import OperationResult
 from cadipy.verification.postconditions import verify_rectangular_extrusion
+from cadipy.verification.registry import verify_postconditions
 
 from .registry import OPERATION_REGISTRY, OpSpec
 from .schema import validate_parameters
@@ -52,35 +55,64 @@ class OperationDispatcher:
     def dispatch(self, request: Mapping[str, Any]) -> OperationResult:
         request_id = str(request.get("id", "request"))
         operation = request.get("operation")
-        if not isinstance(operation, str) or operation not in OPERATION_REGISTRY:
-            raise ProtocolError("unknown CAD operation", details={"operation": operation})
-        spec = OPERATION_REGISTRY[operation]
-        params = request.get("params", {})
-        if not isinstance(params, Mapping):
-            raise InvalidArgumentError("operation params must be an object")
-        normalized = self._validate_params(spec, params)
-        target = self._resolve_target(spec, request.get("target"))
-        data = self._invoke(operation, normalized, target)
-        if self.audit_recorder is not None:
-            self.audit_recorder.record(
-                AuditEvent(
-                    request_id=request_id,
-                    operation=operation,
-                    executor_kind=self.executor.executor_kind,
-                    target=dict(request["target"])
-                    if isinstance(request.get("target"), Mapping)
-                    else {},
-                    parameters=normalized,
-                    rebuild=data.get("rebuild"),
-                    verification=data.get("verification"),
+        report = ExecutionReport(ExecutionPhase.RECEIVED, "certain", RollbackStatus.NOT_ATTEMPTED)
+        try:
+            if not isinstance(operation, str) or operation not in OPERATION_REGISTRY:
+                raise ProtocolError(  # noqa: TRY301
+                    "unknown CAD operation", details={"operation": operation}
                 )
+            spec = OPERATION_REGISTRY[operation]
+            params = request.get("params", {})
+            if not isinstance(params, Mapping):
+                raise InvalidArgumentError(  # noqa: TRY301
+                    "operation params must be an object"
+                )
+            normalized = self._validate_params(spec, params)
+            report = report.transition(ExecutionPhase.VALIDATED)
+            target = self._resolve_target(spec, request.get("target"))
+            report = report.transition(ExecutionPhase.TARGET_RESOLVED)
+            data = self._invoke(operation, normalized, target)
+            report = report.transition(ExecutionPhase.EXECUTED)
+            inspection = _inspection_from_data(data)
+            verify_postconditions(spec.postconditions, data, inspection)
+            report = report.transition(ExecutionPhase.VERIFIED)
+            report = report.transition(ExecutionPhase.COMMITTED)
+            if self.audit_recorder is not None:
+                self.audit_recorder.record(
+                    AuditEvent(
+                        request_id=request_id,
+                        operation=operation,
+                        executor_kind=self.executor.executor_kind,
+                        target=dict(request["target"])
+                        if isinstance(request.get("target"), Mapping)
+                        else {},
+                        parameters=normalized,
+                        rebuild=data.get("rebuild"),
+                        verification=data.get("verification"),
+                    )
+                )
+            return OperationResult(
+                ok=True,
+                request_id=request_id,
+                operation=operation,
+                data=_serialize(data),
+                execution=report,
             )
-        return OperationResult(
-            ok=True,
-            request_id=request_id,
-            operation=operation,
-            data=_serialize(data),
-        )
+        except Exception as exc:
+            failed = report
+            if report.phase not in {
+                ExecutionPhase.FAILED,
+                ExecutionPhase.VERIFICATION_FAILED,
+                ExecutionPhase.COMMITTED,
+            }:
+                failure_phase = (
+                    ExecutionPhase.VERIFICATION_FAILED
+                    if isinstance(exc, VerificationError)
+                    else ExecutionPhase.FAILED
+                )
+                failed = report.transition(failure_phase, state_certainty="uncertain")
+            setattr(exc, "execution", failed)  # noqa: B010
+            raise
 
     def _validate_params(self, spec: OpSpec, params: Mapping[str, Any]) -> dict[str, Any]:
         return validate_parameters(spec.parameters, params, operation=spec.name)
@@ -357,6 +389,10 @@ class OperationDispatcher:
 
 def _handle_dict(value: Any) -> dict[str, Any]:
     return _dict(value)
+
+
+def _inspection_from_data(data: Mapping[str, Any]) -> Any:
+    return data.get("inspection")
 
 
 def _dict(value: Any) -> dict[str, Any]:
