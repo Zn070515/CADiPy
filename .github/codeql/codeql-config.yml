@@ -1,0 +1,6 @@
+name: CADiPy CodeQL config
+
+paths:
+  - src/cadipy
+paths-ignore:
+  - .worktrees/**

@@ -1,0 +1,36 @@
+site_name: CADiPy
+site_description: Maintainable SOLIDWORKS automation and agent operation contracts
+repo_url: https://github.com/Zn070515/cadipy
+site_url: https://zn070515.github.io/cadipy/
+theme:
+  name: material
+  language: zh
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - content.code.copy
+plugins:
+  - search
+nav:
+  - 中文:
+      - 首页: index.md
+      - 使用方式: usage.md
+      - 公共 API: api/index.md
+      - 协议: protocol.md
+      - 兼容性: compatibility.md
+      - 错误语义: exceptions.md
+      - 兼容性与弃用: deprecation.md
+      - 基准口径: benchmarks.md
+      - 迁移记录: migration.md
+      - 发布纪律: release.md
+  - English:
+      - Home: index.en.md
+      - Usage: usage.en.md
+      - Public API: api/index.en.md
+      - Protocol: protocol.en.md
+      - Compatibility: compatibility.en.md
+      - Error semantics: exceptions.en.md
+      - Deprecation: deprecation.en.md
+      - Benchmarks: benchmarks.en.md
+      - Migration: migration.en.md
+      - Release: release.en.md

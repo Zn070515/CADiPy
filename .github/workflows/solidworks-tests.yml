@@ -1,0 +1,28 @@
+name: SOLIDWORKS integration
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 3 * * 1-5"
+
+permissions:
+  contents: read
+
+jobs:
+  real-solidworks:
+    runs-on: [self-hosted, windows, solidworks]
+    timeout-minutes: 30
+    env:
+      CADIPY_REQUIRE_REAL_SOLIDWORKS: "1"
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --extra dev --extra solidworks
+      - run: uv run pytest tests/integration/solidworks -m real_solidworks --real-solidworks -q
