@@ -791,6 +791,7 @@ uv run ruff check .
 uv run ruff format --check .
 uv run mypy src/cadipy
 uv run pytest tests -q
+uv run pytest -m "not solidworks" --cov=cadipy.domain --cov=cadipy.operations --cov=cadipy.protocol --cov=cadipy.verification --cov=cadipy.diagnostics --cov=cadipy.audit --cov-fail-under=85 -q
 ```
 
 If repository configuration changes these commands, follow repository configuration rather than maintaining duplicate rules here.
@@ -830,6 +831,10 @@ Run without SOLIDWORKS where possible:
 * security limits.
 
 These should be suitable for normal CI.
+
+Portable modules must maintain a line-coverage gate of at least 85% across
+domain, operations, protocol, verification, diagnostics, and audit. The gate
+must not count COM mocks as evidence of SOLIDWORKS compatibility.
 
 ## Mock/fake boundary tests
 
@@ -1028,6 +1033,12 @@ Windows x64
 Python 3.12
 ```
 
+The current compatibility evidence distinguishes the following:
+
+* Python 3.10, 3.11, 3.12, and 3.13: portable test matrix tested;
+* Python 3.12 with SOLIDWORKS 2026 SP3.2 revision 34.3.2: real contract tested;
+* other Python/SOLIDWORKS combinations: not validated unless separately evidenced.
+
 Do not claim support for another SOLIDWORKS release merely because APIs appear similar.
 
 Adding a supported SOLIDWORKS version requires evidence.
@@ -1086,7 +1097,10 @@ Separate public documentation from internal engineering notes.
 
 Public documentation belongs in tracked `docs/`.
 
-Research, scratch analysis, architecture explorations, and temporary plans should follow the repository's ignored development-document convention.
+Formal design specifications and implementation plans in `docs/superpowers/`
+are public engineering history and must be curated before commit. Curated,
+public evidence may be kept in `docs/development/`. Temporary scratch
+analysis, unedited reasoning, and private plans belong in ignored local files.
 
 Do not accidentally publish:
 
@@ -1134,6 +1148,10 @@ For C# packages, apply the same discipline to NuGet dependencies.
 
 Preserve the template's layered CI philosophy.
 
+Every third-party GitHub Action reference must use a full 40-character commit
+SHA with a readable version comment. Floating tags such as `@v4` or `@main`
+are not permitted. Dependabot updates must pass CI and receive diff review.
+
 The repository should support separate classes of verification:
 
 ```text
@@ -1151,6 +1169,10 @@ security checks
         │
 real SOLIDWORKS integration
 ```
+
+The portable Python matrix must cover 3.10 through 3.13. The real
+SOLIDWORKS gate runs on the supported Python 3.12 self-hosted environment and
+must fail rather than skip when strict mode is requested.
 
 Real SOLIDWORKS tests may require a licensed self-hosted Windows runner.
 

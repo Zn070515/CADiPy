@@ -97,3 +97,6 @@ files = ["src/cadipy"]
 ignore_missing_imports = true
 show_error_codes = true
 strict = true
+
+[tool.coverage.run]
+source = ["src/cadipy"]

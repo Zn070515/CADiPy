@@ -15,6 +15,7 @@ CADiPy 是面向长期维护的 SOLIDWORKS agent automation 工程。Python 负�
 ```powershell
 uv sync --extra dev
 uv run pytest tests -q
+uv run pytest -m "not solidworks" --cov=cadipy.domain --cov=cadipy.operations --cov=cadipy.protocol --cov=cadipy.verification --cov=cadipy.diagnostics --cov=cadipy.audit --cov-fail-under=85 -q
 uv run pytest tests/integration/solidworks -m solidworks -q
 ```
 

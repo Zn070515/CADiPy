@@ -9,4 +9,5 @@ uv run ruff check .
 uv run ruff format --check .
 uv run mypy src/cadipy
 uv run pytest tests -q
+uv run pytest -m "not solidworks" --cov=cadipy.domain --cov=cadipy.operations --cov=cadipy.protocol --cov=cadipy.verification --cov=cadipy.diagnostics --cov=cadipy.audit --cov-fail-under=85 -q
 ```
