@@ -5,10 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from cadipy.domain.documents import DocumentType
+
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from cadipy.domain.documents import DocumentType
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,7 +102,25 @@ class SolidWorksExecutor(Protocol):
 
     executor_kind: str
 
+    def attach(self) -> ApplicationInfo: ...
+
+    def launch(self) -> ApplicationInfo: ...
+
     def connect(self) -> ApplicationInfo: ...
+
+    def application_info(self) -> ApplicationInfo: ...
+
+    def disconnect(self) -> None: ...
+
+    def list_documents(self) -> tuple[DocumentHandle, ...]: ...
+
+    def active_document(self) -> DocumentHandle | None: ...
+
+    def open_document(
+        self,
+        path: Path,
+        document_type: DocumentType = DocumentType.PART,
+    ) -> DocumentHandle: ...
 
     def create_part(self) -> DocumentHandle: ...
 

@@ -95,6 +95,39 @@ def open_part(application: Any, path: Path) -> Any:
     return document
 
 
+def open_document(application: Any, path: Path, document_type: DocumentType) -> Any:
+    if document_type is not DocumentType.PART:
+        raise DocumentTypeError(
+            "document.open currently supports Part documents only",
+            operation="solidworks.document.open",
+            details={"document_type": document_type.value},
+        )
+    return open_part(application, path)
+
+
+def list_open_documents(application: Any) -> tuple[Any, ...]:
+    try:
+        values = application.GetDocuments
+    except Exception as exc:
+        raise ComOperationError(
+            "SOLIDWORKS open documents could not be enumerated",
+            operation="solidworks.document.list",
+        ) from exc
+    if values is None:
+        return ()
+    return tuple(value for value in values if value is not None)
+
+
+def active_document(application: Any) -> Any | None:
+    try:
+        return application.ActiveDoc
+    except Exception as exc:
+        raise ComOperationError(
+            "SOLIDWORKS active document could not be read",
+            operation="solidworks.document.active",
+        ) from exc
+
+
 def close_document(application: Any, document: Any) -> None:
     try:
         title = str(document.GetTitle)

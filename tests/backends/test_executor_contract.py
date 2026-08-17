@@ -25,8 +25,50 @@ class FakeWorkerExecutor:
 
     executor_kind = "csharp-worker"
 
+    def attach(self) -> ApplicationInfo:
+        return ApplicationInfo(
+            product="SOLIDWORKS",
+            revision="34.3.2",
+            executor=self.executor_kind,
+            connection_mode="attach",
+            owned=False,
+        )
+
+    def launch(self) -> ApplicationInfo:
+        return ApplicationInfo(
+            product="SOLIDWORKS",
+            revision="34.3.2",
+            executor=self.executor_kind,
+            connection_mode="launch",
+            owned=True,
+        )
+
     def connect(self) -> ApplicationInfo:
-        return ApplicationInfo(product="SOLIDWORKS", revision="34.3.2", executor=self.executor_kind)
+        return self.attach()
+
+    def application_info(self) -> ApplicationInfo:
+        return self.attach()
+
+    def disconnect(self) -> None:
+        return None
+
+    def list_documents(self) -> tuple[DocumentHandle, ...]:
+        return ()
+
+    def active_document(self) -> DocumentHandle | None:
+        return None
+
+    def open_document(
+        self,
+        path: Path,
+        document_type: DocumentType = DocumentType.PART,
+    ) -> DocumentHandle:
+        return DocumentHandle(
+            id="part-opened",
+            document_type=document_type,
+            path=path,
+            title=path.stem,
+        )
 
     def create_part(self) -> DocumentHandle:
         return DocumentHandle(id="part-1", document_type=DocumentType.PART, title="Part1")
@@ -95,6 +137,16 @@ def test_future_worker_shape_satisfies_executor_port() -> None:
     executor = FakeWorkerExecutor()
     assert isinstance(executor, SolidWorksExecutor)
     assert executor.connect().executor == "csharp-worker"
+
+
+def test_executor_port_exposes_explicit_lifecycle_and_document_discovery() -> None:
+    executor = FakeWorkerExecutor()
+
+    assert executor.attach().connection_mode == "attach"
+    assert executor.launch().connection_mode == "launch"
+    assert executor.application_info().executor == "csharp-worker"
+    assert executor.list_documents() == ()
+    assert executor.active_document() is None
 
 
 def test_executor_results_are_domain_values_without_com_objects() -> None:

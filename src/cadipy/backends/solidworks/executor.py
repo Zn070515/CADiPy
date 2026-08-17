@@ -39,6 +39,8 @@ class PythonComSolidWorksExecutor:
         self._geometry_sketches: dict[str, str] = {}
         self._feature_documents: dict[str, str] = {}
         self._rebuild_documents: dict[str, bool] = {}
+        self._connection_mode = "attach"
+        self._owns_application = False
 
     def __enter__(self) -> Any:
         self.connect()
@@ -47,28 +49,69 @@ class PythonComSolidWorksExecutor:
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
         self.disconnect()
 
+    def attach(self) -> ApplicationInfo:
+        return self._connect(application.attach_application, mode="attach", owned=False)
+
+    def launch(self) -> ApplicationInfo:
+        return self._connect(application.launch_application, mode="launch", owned=True)
+
     def connect(self) -> ApplicationInfo:
+        """Backward-compatible alias for strict attach semantics."""
+
+        return self.attach()
+
+    def application_info(self) -> ApplicationInfo:
+        self._require_application()
+        return self._info()
+
+    def _connect(
+        self,
+        acquire: Any,
+        *,
+        mode: str,
+        owned: bool,
+    ) -> ApplicationInfo:
         if self._application is None:
             self._apartment.__enter__()
             try:
-                self._application = application.connect_application()
+                self._application = acquire()
             except Exception:
                 self._apartment.__exit__(None, None, None)
                 raise
+        self._connection_mode = mode
+        self._owns_application = owned
+        return self._info()
+
+    def _info(self) -> ApplicationInfo:
         product, revision, executor = application.application_info(
-            self._application,
+            self._require_application(),
             executor=self.executor_kind,
         )
-        return ApplicationInfo(product=product, revision=revision, executor=executor)
+        return ApplicationInfo(
+            product=product,
+            revision=revision,
+            executor=executor,
+            connection_mode=self._connection_mode,
+            owned=self._owns_application,
+        )
 
     def disconnect(self) -> None:
+        owned = self._owns_application
+        app = self._application
         self._features.clear()
         self._geometries.clear()
         self._sketches.clear()
         self._documents.clear()
         self._rebuild_documents.clear()
         self._application = None
-        self._apartment.__exit__(None, None, None)
+        self._owns_application = False
+        if owned and app is not None:
+            try:
+                application.exit_application(app)
+            finally:
+                self._apartment.__exit__(None, None, None)
+        else:
+            self._apartment.__exit__(None, None, None)
 
     def _require_application(self) -> Any:
         if self._application is None:
@@ -91,6 +134,27 @@ class PythonComSolidWorksExecutor:
     def create_part(self) -> DocumentHandle:
         document = documents.new_part(self._require_application())
         handle = self._document_handle(document)
+        self._documents[handle.id] = document
+        return handle
+
+    def list_documents(self) -> tuple[DocumentHandle, ...]:
+        live = documents.list_open_documents(self._require_application())
+        handles = tuple(self._handle_for_live_document(document) for document in live)
+        return handles
+
+    def active_document(self) -> DocumentHandle | None:
+        active = documents.active_document(self._require_application())
+        if active is None:
+            return None
+        return self._handle_for_live_document(active, active=True)
+
+    def open_document(
+        self,
+        path: Path,
+        document_type: DocumentType = DocumentType.PART,
+    ) -> DocumentHandle:
+        document = documents.open_document(self._require_application(), path, document_type)
+        handle = self._document_handle(document, path=path)
         self._documents[handle.id] = document
         return handle
 
@@ -210,10 +274,7 @@ class PythonComSolidWorksExecutor:
         self._rebuild_documents.pop(document.id, None)
 
     def reopen(self, path: Path) -> DocumentHandle:
-        document = documents.open_part(self._require_application(), path)
-        handle = self._document_handle(document, path=path)
-        self._documents[handle.id] = document
-        return handle
+        return self.open_document(path)
 
     def inspect_document(self, document: DocumentHandle) -> DocumentInspection:
         model = self._document_object(document)
@@ -305,6 +366,38 @@ class PythonComSolidWorksExecutor:
             title=title,
             path=path or (Path(raw_path) if raw_path else None),
         )
+
+    def _handle_for_live_document(self, document: Any, *, active: bool = False) -> DocumentHandle:
+        for document_id, known in self._documents.items():
+            if self._same_document(known, document):
+                return DocumentHandle(
+                    id=document_id,
+                    document_type=documents.document_type(document),
+                    title=str(document.GetTitle),
+                    path=Path(str(document.GetPathName))
+                    if str(document.GetPathName)
+                    else known.path,
+                    configuration=known.configuration,
+                    active=active,
+                )
+        handle = self._document_handle(document)
+        handle = DocumentHandle(
+            id=handle.id,
+            document_type=handle.document_type,
+            title=handle.title,
+            path=handle.path,
+            configuration=handle.configuration,
+            active=active,
+        )
+        self._documents[handle.id] = document
+        return handle
+
+    @staticmethod
+    def _same_document(left: Any, right: Any) -> bool:
+        try:
+            return left is right or left.GetPathName == right.GetPathName and left.GetTitle == right.GetTitle
+        except Exception:
+            return False
 
     def _document_object_by_id(self, document_id: str) -> Any:
         try:
