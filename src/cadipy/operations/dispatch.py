@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 from cadipy.audit.events import AuditEvent
 from cadipy.backends.executor import DocumentHandle, SolidWorksExecutor
-from cadipy.domain.errors import InvalidArgumentError, ProtocolError, TargetNotFoundError
 from cadipy.domain.documents import DocumentType
+from cadipy.domain.errors import InvalidArgumentError, ProtocolError, TargetNotFoundError
 from cadipy.domain.targets import TargetBinding
 from cadipy.protocol.result import OperationResult
 from cadipy.verification.postconditions import verify_rectangular_extrusion
@@ -168,10 +168,15 @@ class OperationDispatcher:
             active = self.executor.active_document()
             return {"document": _handle_dict(active) if active is not None else None}
         if operation == "document.open":
-            document_type = DocumentType(params["document_type"])
-            return _handle_dict(
-                self.executor.open_document(Path(params["path"]), document_type)
-            )
+            try:
+                document_type = DocumentType(params["document_type"])
+            except ValueError as exc:
+                raise InvalidArgumentError(
+                    "document.open document_type is not supported",
+                    operation=operation,
+                    details={"document_type": params["document_type"]},
+                ) from exc
+            return _handle_dict(self.executor.open_document(Path(params["path"]), document_type))
         if operation == "document.close":
             assert target is not None
             self.executor.close(target)

@@ -32,6 +32,7 @@ class PythonComSolidWorksExecutor:
         self._apartment = ComApartment()
         self._application: Any = None
         self._documents: dict[str, Any] = {}
+        self._document_handles: dict[str, DocumentHandle] = {}
         self._sketches: dict[str, Any] = {}
         self._geometries: dict[str, Any] = {}
         self._features: dict[str, Any] = {}
@@ -102,6 +103,7 @@ class PythonComSolidWorksExecutor:
         self._geometries.clear()
         self._sketches.clear()
         self._documents.clear()
+        self._document_handles.clear()
         self._rebuild_documents.clear()
         self._application = None
         self._owns_application = False
@@ -135,12 +137,12 @@ class PythonComSolidWorksExecutor:
         document = documents.new_part(self._require_application())
         handle = self._document_handle(document)
         self._documents[handle.id] = document
+        self._document_handles[handle.id] = handle
         return handle
 
     def list_documents(self) -> tuple[DocumentHandle, ...]:
         live = documents.list_open_documents(self._require_application())
-        handles = tuple(self._handle_for_live_document(document) for document in live)
-        return handles
+        return tuple(self._handle_for_live_document(document) for document in live)
 
     def active_document(self) -> DocumentHandle | None:
         active = documents.active_document(self._require_application())
@@ -156,6 +158,7 @@ class PythonComSolidWorksExecutor:
         document = documents.open_document(self._require_application(), path, document_type)
         handle = self._document_handle(document, path=path)
         self._documents[handle.id] = document
+        self._document_handles[handle.id] = handle
         return handle
 
     def create_sketch(self, document: DocumentHandle, plane: str) -> SketchHandle:
@@ -271,6 +274,7 @@ class PythonComSolidWorksExecutor:
     def close(self, document: DocumentHandle) -> None:
         documents.close_document(self._require_application(), self._document_object(document))
         self._documents.pop(document.id, None)
+        self._document_handles.pop(document.id, None)
         self._rebuild_documents.pop(document.id, None)
 
     def reopen(self, path: Path) -> DocumentHandle:
@@ -370,14 +374,14 @@ class PythonComSolidWorksExecutor:
     def _handle_for_live_document(self, document: Any, *, active: bool = False) -> DocumentHandle:
         for document_id, known in self._documents.items():
             if self._same_document(known, document):
+                known_handle = self._document_handles[document_id]
+                raw_path = str(document.GetPathName)
                 return DocumentHandle(
                     id=document_id,
                     document_type=documents.document_type(document),
                     title=str(document.GetTitle),
-                    path=Path(str(document.GetPathName))
-                    if str(document.GetPathName)
-                    else known.path,
-                    configuration=known.configuration,
+                    path=Path(raw_path) if raw_path else known_handle.path,
+                    configuration=known_handle.configuration,
                     active=active,
                 )
         handle = self._document_handle(document)
@@ -390,12 +394,15 @@ class PythonComSolidWorksExecutor:
             active=active,
         )
         self._documents[handle.id] = document
+        self._document_handles[handle.id] = handle
         return handle
 
     @staticmethod
     def _same_document(left: Any, right: Any) -> bool:
         try:
-            return left is right or left.GetPathName == right.GetPathName and left.GetTitle == right.GetTitle
+            return left is right or (
+                left.GetPathName == right.GetPathName and left.GetTitle == right.GetTitle
+            )
         except Exception:
             return False
 

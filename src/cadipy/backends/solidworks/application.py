@@ -7,24 +7,6 @@ from typing import Any
 from cadipy.domain.errors import ComOperationError, SolidWorksNotAvailableError
 
 
-def connect_application() -> Any:
-    try:
-        import win32com.client
-    except ImportError as exc:
-        raise SolidWorksNotAvailableError(
-            "pywin32 is not installed",
-            operation="solidworks.connect",
-        ) from exc
-
-    try:
-        return win32com.client.Dispatch("SldWorks.Application")
-    except Exception as exc:
-        raise SolidWorksNotAvailableError(
-            "SOLIDWORKS COM application is not reachable",
-            operation="solidworks.connect",
-        ) from exc
-
-
 def attach_application() -> Any:
     try:
         import win32com.client

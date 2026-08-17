@@ -42,4 +42,14 @@ assert result.ok
 assert result.data["verification"] == "passed"
 ```
 
+连续操作同一 SOLIDWORKS 文档时使用持久 session：`connect()` 严格连接已有实例，`launch()` 显式创建并拥有新实例。
+
+```python
+from cadipy import connect
+
+with connect() as cad:
+    part = cad.create_part()
+    cad.rebuild(target=part)
+```
+
 详细契约见 [文档首页](docs/index.md)、[API](docs/api/index.md)、[协议](docs/protocol.md) 和 [兼容性](docs/compatibility.md)。

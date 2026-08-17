@@ -20,3 +20,13 @@ Remove-Item Env:CADIPY_REQUIRE_REAL_SOLIDWORKS -ErrorAction SilentlyContinue
 ```
 
 See the [documentation](docs/index.en.md), [API](docs/api/index.en.md), [protocol](docs/protocol.en.md), and [compatibility matrix](docs/compatibility.en.md).
+
+For multi-operation workflows on one SOLIDWORKS document, use a persistent session. `connect()` strictly attaches to an existing instance; `launch()` explicitly creates and owns a new one.
+
+```python
+from cadipy import connect
+
+with connect() as cad:
+    part = cad.create_part()
+    cad.rebuild(target=part)
+```

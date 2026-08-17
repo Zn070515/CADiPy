@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from cadipy.backends.solidworks import PythonComSolidWorksExecutor
 from cadipy.operations.dispatch import OperationDispatcher
+from cadipy.session import CadipySession, ConnectionMode
 
 if TYPE_CHECKING:
     from cadipy.backends.executor import SolidWorksExecutor
@@ -22,19 +22,36 @@ def execute(
 ) -> OperationResult:
     """Execute one registry operation without exposing backend objects."""
 
-    owned_executor = executor is None
-    selected = executor or PythonComSolidWorksExecutor()
-    try:
-        if isinstance(selected, PythonComSolidWorksExecutor):
-            selected.connect()
-        return OperationDispatcher(selected).dispatch(
-            {
-                "id": request_id,
-                "operation": operation,
-                "params": params or {},
-                "target": target,
-            }
-        )
-    finally:
-        if owned_executor and isinstance(selected, PythonComSolidWorksExecutor):
-            selected.disconnect()
+    if executor is None:
+        with connect() as session:
+            return session.execute(
+                operation,
+                params=params,
+                target=target,
+                request_id=request_id,
+            )
+    selected = executor
+    return OperationDispatcher(selected).dispatch(
+        {
+            "id": request_id,
+            "operation": operation,
+            "params": params or {},
+            "target": target,
+        }
+    )
+
+
+def connect(
+    *,
+    mode: ConnectionMode = "attach",
+    executor: SolidWorksExecutor | None = None,
+) -> CadipySession:
+    """Create a persistent session; application acquisition occurs on entry."""
+
+    return CadipySession(executor=executor, connection_mode=mode)
+
+
+def launch(*, executor: SolidWorksExecutor | None = None) -> CadipySession:
+    """Create a persistent session that explicitly owns a new application."""
+
+    return CadipySession(executor=executor, connection_mode="launch")

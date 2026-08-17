@@ -11,7 +11,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-
 @dataclass(frozen=True, slots=True)
 class ApplicationInfo:
     product: str

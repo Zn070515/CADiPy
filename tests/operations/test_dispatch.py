@@ -151,9 +151,7 @@ def test_dispatcher_handles_document_lifecycle_operations_from_one_registry() ->
     target = DocumentHandle("doc-a", DocumentType.PART, "PartA")
     dispatcher = OperationDispatcher(executor, target_resolver=lambda binding: target)
 
-    listed = dispatcher.dispatch(
-        {"id": "list-1", "operation": "document.list", "params": {}}
-    )
+    listed = dispatcher.dispatch({"id": "list-1", "operation": "document.list", "params": {}})
     closed = dispatcher.dispatch(
         {
             "id": "close-1",
@@ -166,6 +164,17 @@ def test_dispatcher_handles_document_lifecycle_operations_from_one_registry() ->
     assert listed.data["documents"][0]["id"] == "doc-a"
     assert closed.ok is True
     assert executor.closed_ids == ["doc-a"]
+
+
+def test_document_open_rejects_unknown_document_type_as_domain_error() -> None:
+    with pytest.raises(InvalidArgumentError):
+        OperationDispatcher(LifecycleFakeExecutor()).dispatch(
+            {
+                "id": "open-1",
+                "operation": "document.open",
+                "params": {"path": "PartA.SLDPRT", "document_type": "surface"},
+            }
+        )
 
 
 class LifecycleFakeExecutor(FakeExecutor):

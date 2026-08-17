@@ -10,7 +10,6 @@ from cadipy.domain.errors import TargetNotFoundError
 from cadipy.domain.targets import TargetBinding
 from cadipy.runtime import DocumentRegistry
 
-
 part_a = DocumentHandle(
     id="backend-a",
     document_type=DocumentType.PART,
@@ -34,9 +33,10 @@ def test_registry_reuses_identity_and_resolves_target_criteria() -> None:
     assert first[0].id == second[0].id
     assert registry.resolve(TargetBinding(path=part_a.path)) == first[0]
     assert registry.resolve(TargetBinding(title=part_a.title)) == first[0]
-    assert registry.resolve(
-        TargetBinding(document_type=DocumentType.PART, title=part_a.title)
-    ) == first[0]
+    assert (
+        registry.resolve(TargetBinding(document_type=DocumentType.PART, title=part_a.title))
+        == first[0]
+    )
 
 
 def test_registry_drops_closed_documents_and_rejects_old_id() -> None:

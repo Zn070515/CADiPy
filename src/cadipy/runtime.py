@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable
+from typing import TYPE_CHECKING
 
 from cadipy.backends.executor import DocumentHandle
+from cadipy.domain.identities import DocumentIdentity
 from cadipy.domain.targets import TargetBinding, resolve_target
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 class DocumentRegistry:
@@ -30,8 +34,19 @@ class DocumentRegistry:
         return tuple(current.values())
 
     def resolve(self, binding: TargetBinding) -> DocumentHandle:
-        resolved = resolve_target(self._documents.values(), binding, mutating=True)
-        return resolved
+        identities = tuple(
+            DocumentIdentity(
+                document_id=handle.id,
+                path=handle.path,
+                title=handle.title,
+                document_type=handle.document_type,
+                configuration=handle.configuration,
+                active=handle.active,
+            )
+            for handle in self._documents.values()
+        )
+        resolved = resolve_target(identities, binding, mutating=True)
+        return self._documents[resolved.document_id]
 
     def get(self, document_id: str) -> DocumentHandle | None:
         return self._documents.get(document_id)

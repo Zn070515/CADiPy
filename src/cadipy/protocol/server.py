@@ -28,6 +28,10 @@ class ProtocolServer:
     def from_executor(cls, executor: SolidWorksExecutor) -> ProtocolServer:
         return cls(OperationDispatcher(executor))
 
+    @classmethod
+    def from_session(cls, session: Any) -> ProtocolServer:
+        return cls(session.dispatcher)
+
     def handle(self, request: Mapping[str, Any]) -> dict[str, Any]:
         request_id = str(request.get("id", "request"))
         operation = str(request.get("operation", ""))
