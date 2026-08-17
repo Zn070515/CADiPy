@@ -107,8 +107,8 @@ class StaExecutorHost(ExecutorHost):
         wait_timeout = self._command_timeout if timeout is None else timeout
         try:
             return future.result(timeout=wait_timeout)
-        except TimeoutError:
-            self._fail_after_timeout()
+        except TimeoutError as exc:
+            self._fail_after_timeout(exc)
             raise
 
     def close(self, timeout: float = 30.0) -> None:
@@ -158,6 +158,9 @@ class StaExecutorHost(ExecutorHost):
                 self._uninitialize_apartment()
             if self._cleanup_error is None:
                 self._record_startup_failure(self._startup_error)
+            failure = self._cleanup_error or self._startup_error
+            assert isinstance(failure, WorkerError)
+            self._reject_pending(failure)
             self._started.set()
             return
 
@@ -264,10 +267,14 @@ class StaExecutorHost(ExecutorHost):
         if self._state is not HostState.RUNNING:
             raise WorkerError("executor host is not running")
 
-    def _fail_after_timeout(self) -> None:
+    def _fail_after_timeout(self, cause: BaseException) -> None:
+        error = WorkerError("executor host command timed out")
+        error.__cause__ = cause
         with self._state_lock:
-            if self._state is HostState.RUNNING:
-                self._state = HostState.FAILED
+            if self._state is not HostState.RUNNING:
+                return
+            self._state = HostState.FAILED
+        self._reject_pending(error)
 
 
 def _noop_apartment_hook() -> None:

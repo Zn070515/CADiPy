@@ -3,7 +3,6 @@ from __future__ import annotations
 import sys
 import threading
 import time
-from collections import deque
 from concurrent.futures import Future
 
 import pytest
@@ -371,6 +370,68 @@ def test_host_worker_loop_failure_rejects_pending_work() -> None:
     host.close(timeout=30.0)
 
 
+def test_host_startup_failure_rejects_accepted_commands_before_completion() -> None:
+    startup_error = RuntimeError("factory failed")
+    factory_started = threading.Event()
+    release_factory = threading.Event()
+    command_accepted = threading.Event()
+    command_done = threading.Event()
+    start_errors: list[BaseException] = []
+    command_errors: list[BaseException] = []
+    host = StaExecutorHost(
+        lambda: (
+            factory_started.set(),
+            release_factory.wait(timeout=1.0),
+            (_ for _ in ()).throw(startup_error),
+        )[2],
+        apartment_init=lambda: None,
+        apartment_uninit=lambda: None,
+    )
+    original_put = host._commands.put
+
+    def acknowledge_put(item: object, *args: object, **kwargs: object) -> None:
+        original_put(item, *args, **kwargs)
+        if item is not None:
+            command_accepted.set()
+
+    host._commands.put = acknowledge_put  # type: ignore[method-assign]
+
+    def submit_command() -> None:
+        try:
+            host.submit(lambda: "must not run")
+        except BaseException as exc:
+            command_errors.append(exc)
+        finally:
+            command_done.set()
+
+    def start_host() -> None:
+        try:
+            host.start()
+        except BaseException as exc:
+            start_errors.append(exc)
+
+    start_thread = threading.Thread(target=start_host, daemon=True)
+    start_thread.start()
+    assert factory_started.wait(timeout=1.0)
+    command_thread = threading.Thread(target=submit_command, daemon=True)
+    command_thread.start()
+    assert command_accepted.wait(timeout=1.0)
+    release_factory.set()
+
+    start_thread.join(timeout=1.0)
+    command_thread.join(timeout=1.0)
+    assert not start_thread.is_alive()
+    assert command_done.is_set()
+    assert len(start_errors) == 1
+    assert isinstance(start_errors[0], WorkerError)
+    assert start_errors[0].__cause__ is startup_error
+    assert len(command_errors) == 1
+    assert isinstance(command_errors[0], WorkerError)
+    assert command_errors[0].__cause__ is startup_error
+    assert host.state is HostState.FAILED
+    host.close(timeout=30.0)
+
+
 def test_host_rejects_commands_after_close() -> None:
     host = StaExecutorHost(lambda: RecordingExecutor())
     host.start()
@@ -445,14 +506,27 @@ def test_host_timeout_does_not_interrupt_running_command() -> None:
 def test_host_rejects_queued_commands_after_timeout() -> None:
     started = threading.Event()
     release = threading.Event()
-    calls: deque[str] = deque()
-    errors: list[BaseException] = []
+    queued_accepted = threading.Event()
+    queued_done = threading.Event()
+    queued_errors: list[BaseException] = []
+    first_errors: list[BaseException] = []
 
     def blocking() -> None:
         started.set()
         release.wait(timeout=30.0)
 
     host = StaExecutorHost(lambda: RecordingExecutor())
+    original_put = host._commands.put
+
+    def acknowledge_put(item: object, *args: object, **kwargs: object) -> None:
+        original_put(item, *args, **kwargs)
+        if item is not None and item[0] is queued_command:  # type: ignore[index]
+            queued_accepted.set()
+
+    def queued_command() -> None:
+        raise AssertionError("queued command must not run")
+
+    host._commands.put = acknowledge_put  # type: ignore[method-assign]
     host.start()
     try:
 
@@ -460,17 +534,31 @@ def test_host_rejects_queued_commands_after_timeout() -> None:
             try:
                 host.submit(blocking)
             except BaseException as exc:
-                errors.append(exc)
+                first_errors.append(exc)
+
+        def submit_queued() -> None:
+            try:
+                host.submit(queued_command)
+            except BaseException as exc:
+                queued_errors.append(exc)
+            finally:
+                queued_done.set()
 
         first = threading.Thread(target=submit_blocking)
         first.start()
         assert started.wait(timeout=1.0)
+        queued = threading.Thread(target=submit_queued)
+        queued.start()
+        assert queued_accepted.wait(timeout=1.0)
         with pytest.raises(TimeoutError):
-            host.submit(lambda: calls.append("must not run"), timeout=0.01)
+            host.submit(lambda: None, timeout=0.01)
+        assert queued_done.wait(timeout=1.0)
+        assert len(queued_errors) == 1
+        assert isinstance(queued_errors[0], WorkerError)
+        assert not first_errors
         release.set()
         first.join(timeout=1.0)
-        assert not calls
-        assert not errors
+        queued.join(timeout=1.0)
     finally:
         release.set()
         host.close(timeout=30.0)
@@ -491,7 +579,7 @@ def test_host_close_waits_for_queued_commands_before_disconnect() -> None:
     host.start()
     try:
         host.submit(lambda: events.append("first"))
-        host.submit(lambda: (time.sleep(0.01), events.append("second")))
+        host.submit(lambda: events.append("second"))
     finally:
         host.close(timeout=30.0)
 
@@ -504,6 +592,15 @@ def test_host_close_drains_queued_commands_before_disconnect() -> None:
     events: list[str] = []
     errors: list[BaseException] = []
     host = StaExecutorHost(lambda: RecordingExecutor(events))
+    queued_accepted = threading.Event()
+    original_put = host._commands.put
+
+    def acknowledge_put(item: object, *args: object, **kwargs: object) -> None:
+        original_put(item, *args, **kwargs)
+        if item is not None and item[0] is second_command:  # type: ignore[index]
+            queued_accepted.set()
+
+    host._commands.put = acknowledge_put  # type: ignore[method-assign]
     host.start()
 
     def blocking() -> None:
@@ -511,9 +608,12 @@ def test_host_close_drains_queued_commands_before_disconnect() -> None:
         started.set()
         release.wait(timeout=30.0)
 
+    def second_command() -> None:
+        events.append("second")
+
     def queued() -> None:
         try:
-            host.submit(lambda: events.append("second"))
+            host.submit(second_command)
         except BaseException as exc:
             errors.append(exc)
 
@@ -523,7 +623,7 @@ def test_host_close_drains_queued_commands_before_disconnect() -> None:
         assert started.wait(timeout=1.0)
         queued_thread = threading.Thread(target=queued)
         queued_thread.start()
-        time.sleep(0.01)
+        assert queued_accepted.wait(timeout=1.0)
         close_thread = threading.Thread(target=lambda: host.close(timeout=30.0))
         close_thread.start()
         release.set()
