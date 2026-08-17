@@ -9,6 +9,8 @@ from cadipy.backends.executor import DocumentHandle
 from cadipy.domain.identities import DocumentIdentity
 from cadipy.domain.targets import TargetBinding, resolve_target
 
+from .host import ExecutorHost, HostState, StaExecutorHost
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -77,3 +79,6 @@ class DocumentRegistry:
             configuration=handle.configuration,
             active=handle.active,
         )
+
+
+__all__ = ["DocumentRegistry", "ExecutorHost", "HostState", "StaExecutorHost"]

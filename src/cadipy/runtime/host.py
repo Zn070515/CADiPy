@@ -7,7 +7,7 @@ import threading
 from collections.abc import Callable
 from concurrent.futures import Future
 from enum import Enum
-from typing import Any, TypeVar
+from typing import Any, Protocol, TypeVar, runtime_checkable
 
 from cadipy.domain.errors import SessionClosedError, WorkerError
 
@@ -25,7 +25,18 @@ Command = tuple[Callable[[], Any], Future[Any]]
 ApartmentHook = Callable[[], None]
 
 
-class StaExecutorHost:
+@runtime_checkable
+class ExecutorHost(Protocol):
+    """Contract for serialized executor lifecycle ownership."""
+
+    def start(self) -> None: ...
+
+    def submit(self, command: Callable[[], ResultT], timeout: float | None = None) -> ResultT: ...
+
+    def close(self, timeout: float = 30.0) -> None: ...
+
+
+class StaExecutorHost(ExecutorHost):
     """Run one backend executor and its commands on one dedicated thread."""
 
     def __init__(
@@ -38,8 +49,8 @@ class StaExecutorHost:
     ) -> None:
         self._executor_factory = executor_factory
         self._command_timeout = command_timeout
-        self._apartment_init = apartment_init or _initialize_sta
-        self._apartment_uninit = apartment_uninit or _uninitialize_sta
+        self._apartment_init = apartment_init or _noop_apartment_hook
+        self._apartment_uninit = apartment_uninit or _noop_apartment_hook
         self._commands: queue.Queue[Command | None] = queue.Queue()
         self._state = HostState.CREATED
         self._state_lock = threading.Lock()
@@ -153,6 +164,8 @@ class StaExecutorHost:
         self._started.set()
         try:
             self._serve()
+        except BaseException as exc:
+            self._record_worker_failure(exc)
         finally:
             self._disconnect_and_uninitialize(executor)
 
@@ -216,6 +229,24 @@ class StaExecutorHost:
             self._cleanup_error = error
             self._state = HostState.FAILED
 
+    def _record_worker_failure(self, cause: BaseException) -> None:
+        error = WorkerError("executor host worker failed")
+        error.__cause__ = cause
+        with self._state_lock:
+            self._state = HostState.FAILED
+        self._reject_pending(error)
+
+    def _reject_pending(self, error: WorkerError) -> None:
+        while True:
+            try:
+                item = self._commands.get_nowait()
+            except queue.Empty:
+                return
+            if item is not None:
+                _, future = item
+                if not future.done():
+                    future.set_exception(error)
+
     def _record_startup_failure(self, cause: BaseException) -> None:
         error = WorkerError("executor host startup failed")
         error.__cause__ = cause
@@ -239,13 +270,5 @@ class StaExecutorHost:
                 self._state = HostState.FAILED
 
 
-def _initialize_sta() -> None:
-    import pythoncom
-
-    pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)
-
-
-def _uninitialize_sta() -> None:
-    import pythoncom
-
-    pythoncom.CoUninitialize()
+def _noop_apartment_hook() -> None:
+    return None

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from collections import deque
@@ -8,7 +9,7 @@ from concurrent.futures import Future
 import pytest
 
 from cadipy.domain.errors import SessionClosedError, WorkerError
-from cadipy.runtime.host import HostState, StaExecutorHost
+from cadipy.runtime.host import ExecutorHost, HostState, StaExecutorHost
 
 
 class RecordingExecutor:
@@ -24,6 +25,7 @@ def test_host_serializes_commands_on_one_worker_thread() -> None:
     host = StaExecutorHost(lambda: RecordingExecutor())
     host.start()
     try:
+        assert isinstance(host, ExecutorHost)
         thread_ids = [host.submit(lambda: threading.get_ident()) for _ in range(3)]
         assert len(set(thread_ids)) == 1
     finally:
@@ -308,6 +310,64 @@ def test_host_launch_failure_is_prompt_stable_and_safe_to_close(
     assert errors[0].__cause__ is launch_error
     assert host.state is HostState.FAILED
     assert not host._worker.is_alive()
+    host.close(timeout=30.0)
+
+
+def test_host_default_apartment_is_portable_without_pythoncom(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "pythoncom", None)
+    host = StaExecutorHost(lambda: RecordingExecutor())
+    host.start()
+    try:
+        assert host.submit(lambda: "portable") == "portable"
+    finally:
+        host.close(timeout=30.0)
+
+
+def test_host_worker_loop_failure_rejects_pending_work() -> None:
+    loop_error = RuntimeError("queue loop failed")
+    factory_started = threading.Event()
+    release_factory = threading.Event()
+    pending_future: Future[str] = Future()
+    host = StaExecutorHost(
+        lambda: (
+            factory_started.set(),
+            release_factory.wait(timeout=1.0),
+            RecordingExecutor(),
+        )[2],
+        apartment_init=lambda: None,
+        apartment_uninit=lambda: None,
+    )
+    original_get = host._commands.get
+    first_get = True
+
+    def failing_get(*, block: bool = True, timeout: float | None = None) -> object:
+        nonlocal first_get
+        if first_get:
+            first_get = False
+            raise loop_error
+        return original_get(block=block, timeout=timeout)
+
+    host._commands.get = failing_get  # type: ignore[method-assign]
+    start_thread = threading.Thread(target=host.start)
+    start_thread.start()
+    assert factory_started.wait(timeout=1.0)
+    host._commands.put((lambda: "pending", pending_future))
+    release_factory.set()
+
+    start_thread.join(timeout=1.0)
+    assert not start_thread.is_alive()
+
+    for _ in range(100):
+        if host.state is HostState.FAILED:
+            break
+        time.sleep(0.01)
+
+    assert host.state is HostState.FAILED
+    with pytest.raises(WorkerError) as exc_info:
+        pending_future.result(timeout=1.0)
+    assert exc_info.value.__cause__ is loop_error
     host.close(timeout=30.0)
 
 
