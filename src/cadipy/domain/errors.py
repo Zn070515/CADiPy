@@ -22,6 +22,10 @@ class CadipyError(Exception):
         self.details = details or {}
 
 
+class SessionClosedError(CadipyError):
+    code = "session_closed"
+
+
 class InvalidArgumentError(CadipyError):
     code = "invalid_argument"
 

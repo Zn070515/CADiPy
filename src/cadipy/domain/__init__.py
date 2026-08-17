@@ -5,6 +5,7 @@ from .errors import (
     AmbiguousSelectionError,
     CadipyError,
     InvalidArgumentError,
+    SessionClosedError,
     TargetMismatchError,
     TargetNotFoundError,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "DocumentIdentity",
     "DocumentType",
     "InvalidArgumentError",
+    "SessionClosedError",
     "TargetBinding",
     "TargetMismatchError",
     "TargetNotFoundError",

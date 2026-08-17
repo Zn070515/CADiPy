@@ -16,6 +16,8 @@ class ApplicationInfo:
     product: str
     revision: str
     executor: str
+    connection_mode: str = "attach"
+    owned: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +27,7 @@ class DocumentHandle:
     title: str
     path: Path | None = None
     configuration: str | None = None
+    active: bool = False
 
     kind = "document"
 
