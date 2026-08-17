@@ -12,9 +12,9 @@ jobs:
   dependency-audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: uv export --frozen --no-dev --no-emit-project -o requirements.txt
@@ -29,11 +29,11 @@ jobs:
       security-events: write
       actions: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v3
+      - uses: actions/checkout@v7
+      - uses: github/codeql-action/init@v4
         with:
           languages: python
-      - uses: github/codeql-action/autobuild@v3
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/autobuild@v4
+      - uses: github/codeql-action/analyze@v4
         with:
           category: /language:python
