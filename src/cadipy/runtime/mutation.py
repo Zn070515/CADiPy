@@ -147,7 +147,8 @@ class MutationScope:
                     "SOLIDWORKS rebuild was unsuccessful",
                     details={"errors": tuple(getattr(result, "errors", ()))},
                 )
-            self.report = self.report.transition(ExecutionPhase.REBUILT)
+            if self.report.phase is not ExecutionPhase.REBUILT:
+                self.report = self.report.transition(ExecutionPhase.REBUILT)
             self._rebuild_succeeded = True
         except BaseException as exc:
             self._fail(exc, label="rebuild")

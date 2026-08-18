@@ -240,6 +240,31 @@ def test_unsupported_capability_persists_uncertainty_until_reconciliation() -> N
     assert executor.calls == ["rebuild"]
 
 
+def test_save_path_reopen_failure_rolls_back_owned_resources() -> None:
+    executor = PersistenceFailureExecutor()
+    save_path = "C:/temporary/Part1.SLDPRT"
+
+    with pytest.raises(RuntimeError) as caught:
+        OperationDispatcher(executor).dispatch(
+            {
+                "id": "persistence-failure",
+                "operation": "part.create_rectangular_extrude",
+                "params": {
+                    "width_mm": 100.0,
+                    "height_mm": 60.0,
+                    "depth_mm": 3.0,
+                    "save_path": save_path,
+                },
+            }
+        )
+
+    assert caught.value.execution.rollback_status is RollbackStatus.ROLLED_BACK
+    assert "commit" not in executor.mutation_calls
+    assert executor.owned_ids == set()
+    assert executor.mutation_calls == ["begin", "created:doc-1", "rollback", "verify_rollback"]
+    assert executor.calls[-3:] == ["save", "close", "reopen"]
+
+
 def test_unsuccessful_rebuild_fails_and_rolls_back() -> None:
     executor = UnsuccessfulRebuildExecutor()
 
@@ -716,6 +741,30 @@ class UnsupportedMutationExecutor:
 class UnsuccessfulRebuildExecutor(FakeExecutor):
     def rebuild(self, document: DocumentHandle) -> RebuildReport:
         return RebuildReport(False, errors=("forced rebuild failure",))
+
+
+class PersistenceFailureExecutor(FakeExecutor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.owned_ids: set[str] = set()
+
+    def create_part(self) -> DocumentHandle:
+        document = super().create_part()
+        self.owned_ids.add(document.id)
+        return document
+
+    def close(self, document: DocumentHandle) -> None:
+        super().close(document)
+        self.owned_ids.discard(document.id)
+
+    def reopen(self, path: Path) -> DocumentHandle:
+        self.calls.append("reopen")
+        self.owned_ids.add("reopened-doc")
+        raise RuntimeError("reopen failed")
+
+    def rollback_mutation(self, snapshot: object) -> None:
+        super().rollback_mutation(snapshot)
+        self.owned_ids.clear()
 
 
 class VisibilityMismatchExecutor:

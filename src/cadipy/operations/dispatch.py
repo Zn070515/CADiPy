@@ -31,7 +31,12 @@ from cadipy.domain.sketches import (
 )
 from cadipy.domain.targets import TargetBinding
 from cadipy.protocol.result import OperationResult
-from cadipy.runtime.mutation import MutationCapability, MutationScope, MutationSnapshot
+from cadipy.runtime.mutation import (
+    MutationAction,
+    MutationCapability,
+    MutationScope,
+    MutationSnapshot,
+)
 from cadipy.verification.postconditions import verify_rectangular_extrusion
 from cadipy.verification.registry import verify_postconditions
 
@@ -427,6 +432,11 @@ class OperationDispatcher:
                     "rectangular extrusion requires semantic rollback capability",
                     operation=operation,
                 )
+            save: Any = None
+            reopened: DocumentHandle | None = None
+            reopened_rebuild: Any = None
+            reopened_inspection: Any = None
+            reopened_verification: Any = None
             with MutationScope(capability, snapshot) as scope:
                 document = scope.step("create part", self.executor.create_part)
                 scope.mark_created_resource(document.id)
@@ -454,7 +464,28 @@ class OperationDispatcher:
                     params["height_mm"],
                     params["depth_mm"],
                 )
-                scope.verify((lambda: verification.passed,))
+                postconditions: list[MutationAction] = [lambda: verification.passed]
+                if params.get("save_path"):
+                    path = Path(params["save_path"])
+                    save = scope.step("save", lambda: self.executor.save(document, path))
+                    if not getattr(save, "success", False):
+                        raise TransactionError("CADiPy save did not succeed")
+                    scope.step("close", lambda: self.executor.close(document))
+                    reopened = scope.step("reopen", lambda: self.executor.reopen(path))
+                    scope.mark_created_resource(reopened.id)
+                    reopened_rebuild = scope.rebuild(lambda: self.executor.rebuild(reopened))
+                    reopened_inspection = scope.step(
+                        "inspect reopened document",
+                        lambda: self.executor.inspect_document(reopened),
+                    )
+                    reopened_verification = verify_rectangular_extrusion(
+                        reopened_inspection,
+                        params["width_mm"],
+                        params["height_mm"],
+                        params["depth_mm"],
+                    )
+                    postconditions.append(lambda: reopened_verification.passed)
+                scope.verify(postconditions)
             data: dict[str, Any] = {
                 "document": _handle_dict(document),
                 "sketch": _handle_dict(sketch),
@@ -466,20 +497,13 @@ class OperationDispatcher:
                 "inspection": _dict(inspection),
             }
             if params.get("save_path"):
-                path = Path(params["save_path"])
-                save = self.executor.save(document, path)
-                self.executor.close(document)
-                reopened = self.executor.reopen(path)
+                assert save is not None
+                assert reopened is not None
+                assert reopened_rebuild is not None
+                assert reopened_inspection is not None
+                assert reopened_verification is not None
                 data["save"] = _dict(save)
                 data["reopened_document"] = _handle_dict(reopened)
-                reopened_rebuild = self.executor.rebuild(reopened)
-                reopened_inspection = self.executor.inspect_document(reopened)
-                reopened_verification = verify_rectangular_extrusion(
-                    reopened_inspection,
-                    params["width_mm"],
-                    params["height_mm"],
-                    params["depth_mm"],
-                )
                 data["reopened_rebuild"] = "ok" if reopened_rebuild.success else "failed"
                 data["reopened_inspection"] = _dict(reopened_inspection)
                 data["reopened_verification"] = reopened_verification.to_dict()

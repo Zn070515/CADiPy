@@ -288,11 +288,13 @@ class PythonComSolidWorksExecutor:
                 )
             document = self._documents.get(snapshot.created_resource_id)
             if document is None:
-                raise ComOperationError(
-                    "created resource is no longer available for rollback",
-                    operation="solidworks.mutation.rollback",
-                    details={"document_id": snapshot.created_resource_id},
-                )
+                if snapshot.created_resource_id not in self._created_documents:
+                    raise ComOperationError(
+                        "created resource is no longer available for rollback",
+                        operation="solidworks.mutation.rollback",
+                        details={"document_id": snapshot.created_resource_id},
+                    )
+                return
             self.close(self._document_handles[snapshot.created_resource_id])
         elif self._undo_recording:
             model = self._documents.get(snapshot.target_identity.document_id)
@@ -1267,7 +1269,11 @@ class PythonComSolidWorksExecutor:
         self._rebuild_documents.pop(document.id, None)
 
     def reopen(self, path: Path) -> DocumentHandle:
-        return self.open_document(path)
+        handle = self.open_document(path)
+        if self._mutation_snapshot is not None and self._mutation_snapshot.created_resource:
+            self._created_document_ids.add(handle.id)
+            self._created_documents[handle.id] = self._documents[handle.id]
+        return handle
 
     def inspect_document(self, document: DocumentHandle) -> DocumentInspection:
         model = self._document_object(document)
