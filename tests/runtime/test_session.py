@@ -120,7 +120,14 @@ class _DocumentExecutor(FakeExecutor):
         self.documents[document.id] = document
         return document
 
-    def close(self, document):
+    def close(
+        self,
+        document,
+        *,
+        save: bool = False,
+        discard: bool = False,
+        require_clean: bool | None = None,
+    ):
         self.documents.pop(document.id)
 
     def open_document(self, path, document_type=DocumentType.PART):

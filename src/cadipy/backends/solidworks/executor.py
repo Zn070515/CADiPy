@@ -17,9 +17,11 @@ from cadipy.backends.executor import (
 )
 from cadipy.domain.documents import DocumentType
 from cadipy.domain.errors import (
+    ApplicationOwnershipError,
     ComOperationError,
     DocumentTypeError,
     EntityReferenceInvalidError,
+    FileConflictError,
     RebuildError,
 )
 from cadipy.domain.sketches import (
@@ -90,7 +92,7 @@ class PythonComSolidWorksExecutor:
         self._geometry_sketches: dict[str, str] = {}
         self._feature_documents: dict[str, str] = {}
         self._rebuild_documents: dict[str, bool] = {}
-        self._connection_mode = "attach"
+        self._connection_mode: str | None = None
         self._owns_application = False
         self._mutation_snapshot: MutationSnapshot | None = None
         self._undo_recording = False
@@ -142,15 +144,26 @@ class PythonComSolidWorksExecutor:
         owned: bool,
         visible: bool | None,
     ) -> ApplicationInfo:
-        if self._application is None:
-            self._apartment.__enter__()
-            try:
-                self._application = acquire()
-            except Exception:
-                self._apartment.__exit__(None, None, None)
-                raise
+        if self._application is not None:
+            if self._connection_mode != mode:
+                raise ApplicationOwnershipError(
+                    "SOLIDWORKS application is already acquired in a conflicting mode",
+                    operation=f"solidworks.{mode}",
+                    details={
+                        "current_mode": self._connection_mode,
+                        "requested_mode": mode,
+                    },
+                )
+            return self._info()
+        self._apartment.__enter__()
+        try:
+            acquired = acquire()
             if visible is not None:
-                application.set_visibility(self._application, visible)
+                application.set_visibility(acquired, visible)
+        except Exception:
+            self._apartment.__exit__(None, None, None)
+            raise
+        self._application = acquired
         self._connection_mode = mode
         self._owns_application = owned
         return self._info()
@@ -164,13 +177,13 @@ class PythonComSolidWorksExecutor:
             product=product,
             revision=revision,
             executor=executor,
-            connection_mode=self._connection_mode,
+            connection_mode=self._connection_mode or "disconnected",
             owned=self._owns_application,
             visible=visible,
         )
 
     def disconnect(self) -> None:
-        owned = self._owns_application
+        owned = self._owns_application and self._connection_mode == "launch"
         app = self._application
         self._features.clear()
         self._geometries.clear()
@@ -192,6 +205,7 @@ class PythonComSolidWorksExecutor:
         self._undo_attempted = False
         self._mutation_state_is_uncertain = False
         self._application = None
+        self._connection_mode = None
         self._owns_application = False
         if owned and app is not None:
             try:
@@ -261,6 +275,29 @@ class PythonComSolidWorksExecutor:
             model_fingerprint=self._mutation_snapshot.model_fingerprint,
             created_resource=True,
             created_resource_id=resource_id,
+            file_path=self._mutation_snapshot.file_path,
+            file_existed_before=self._mutation_snapshot.file_existed_before,
+            file_created_by_scope=self._mutation_snapshot.file_created_by_scope,
+            file_overwritten=self._mutation_snapshot.file_overwritten,
+        )
+
+    def record_created_file(self, path: Path, *, existed_before: bool) -> None:
+        if self._mutation_snapshot is None:
+            raise ComOperationError(
+                "created file was recorded outside a mutation",
+                operation="solidworks.mutation.file",
+            )
+        self._mutation_snapshot = MutationSnapshot(
+            target_identity=self._mutation_snapshot.target_identity,
+            dirty=self._mutation_snapshot.dirty,
+            save_observation=self._mutation_snapshot.save_observation,
+            model_fingerprint=self._mutation_snapshot.model_fingerprint,
+            created_resource=self._mutation_snapshot.created_resource,
+            created_resource_id=self._mutation_snapshot.created_resource_id,
+            file_path=path,
+            file_existed_before=existed_before,
+            file_created_by_scope=not existed_before,
+            file_overwritten=existed_before,
         )
 
     def commit_mutation(self, snapshot: MutationSnapshot) -> None:
@@ -297,7 +334,8 @@ class PythonComSolidWorksExecutor:
                         details={"document_id": snapshot.created_resource_id},
                     )
                 return
-            self.close(self._document_handles[snapshot.created_resource_id])
+            self.close(self._document_handles[snapshot.created_resource_id], discard=True)
+            self._rollback_file(snapshot)
         elif self._undo_recording:
             model = self._documents.get(snapshot.target_identity.document_id)
             extension = getattr(model, "Extension", None)
@@ -321,8 +359,17 @@ class PythonComSolidWorksExecutor:
                 )
             undo(1)
             self._undo_attempted = True
+            self._rollback_file(snapshot)
 
     def verify_rollback(self, snapshot: MutationSnapshot) -> bool:
+        if snapshot.file_overwritten:
+            return False
+        if (
+            snapshot.file_created_by_scope
+            and snapshot.file_path is not None
+            and snapshot.file_path.exists()
+        ):
+            return False
         if snapshot.created_resource and snapshot.created_resource_id:
             if snapshot.created_resource_id not in self._created_document_ids:
                 return False
@@ -344,6 +391,19 @@ class PythonComSolidWorksExecutor:
         if document is None or handle is None:
             return False
         return self._document_fingerprint(handle) == snapshot.model_fingerprint
+
+    @staticmethod
+    def _rollback_file(snapshot: MutationSnapshot) -> None:
+        if not snapshot.file_created_by_scope or snapshot.file_path is None:
+            return
+        try:
+            snapshot.file_path.unlink(missing_ok=True)
+        except OSError as exc:
+            raise ComOperationError(
+                "CADiPy could not remove its exact mutation-created file",
+                operation="solidworks.mutation.rollback.file",
+                details={"path": str(snapshot.file_path)},
+            ) from exc
 
     def _document_fingerprint(self, document: DocumentHandle) -> str:
         inspection = self.inspect_document(document)
@@ -1233,7 +1293,20 @@ class PythonComSolidWorksExecutor:
         self._rebuild_documents[document.id] = True
         return RebuildReport(success=True)
 
-    def save(self, document: DocumentHandle, path: Path) -> SaveReport:
+    def save(
+        self,
+        document: DocumentHandle,
+        path: Path,
+        *,
+        overwrite: bool = False,
+    ) -> SaveReport:
+        path = Path(path)
+        if path.exists() and not overwrite:
+            raise FileConflictError(
+                "destination file already exists; pass overwrite=True to replace it",
+                operation="solidworks.save",
+                details={"path": str(path)},
+            )
         model = self._document_object(document)
         try:
             import pythoncom
@@ -1280,8 +1353,21 @@ class PythonComSolidWorksExecutor:
             active=known.active,
         )
 
-    def close(self, document: DocumentHandle) -> None:
-        documents.close_document(self._require_application(), self._document_object(document))
+    def close(
+        self,
+        document: DocumentHandle,
+        *,
+        save: bool = False,
+        discard: bool = False,
+        require_clean: bool | None = None,
+    ) -> None:
+        documents.close_document(
+            self._require_application(),
+            self._document_object(document),
+            save=save,
+            discard=discard,
+            require_clean=require_clean,
+        )
         self._documents.pop(document.id, None)
         self._document_handles.pop(document.id, None)
         self._rebuild_documents.pop(document.id, None)

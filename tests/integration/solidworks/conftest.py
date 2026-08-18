@@ -143,7 +143,7 @@ def solidworks_session(
         try:
             for document in session.list_documents():
                 if document.id not in initial_ids:
-                    session.close(target=document)
+                    session.close(target=document, discard=True)
         finally:
             cleanup_error: BaseException | None = None
             try:

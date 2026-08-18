@@ -30,6 +30,10 @@ class SessionClosedError(CadipyError):
     code = "session_closed"
 
 
+class ApplicationOwnershipError(CadipyError):
+    code = "application_ownership_conflict"
+
+
 class InvalidArgumentError(CadipyError):
     code = "invalid_argument"
 
@@ -68,6 +72,10 @@ class DocumentTypeError(CadipyError):
 
 class FileConflictError(CadipyError):
     code = "file_conflict"
+
+
+class DocumentDirtyError(CadipyError):
+    code = "document_dirty"
 
 
 class SolidWorksNotAvailableError(CadipyError):

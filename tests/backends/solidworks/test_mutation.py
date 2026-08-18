@@ -8,7 +8,7 @@ from cadipy.backends.executor import DocumentHandle
 from cadipy.backends.solidworks import documents as solidworks_documents
 from cadipy.backends.solidworks.executor import PythonComSolidWorksExecutor
 from cadipy.domain.documents import DocumentType
-from cadipy.domain.errors import ComOperationError
+from cadipy.domain.errors import ComOperationError, FileConflictError
 from cadipy.domain.identities import DocumentIdentity
 from cadipy.runtime.mutation import MutationSnapshot
 
@@ -62,6 +62,69 @@ def test_uncertain_mutation_state_persists_until_reconciliation() -> None:
     assert executor.mutation_state_uncertain() is False
 
 
+def test_created_file_rollback_deletes_only_exact_scope_file(tmp_path, monkeypatch) -> None:
+    executor = PythonComSolidWorksExecutor()
+    handle = DocumentHandle("created-1", DocumentType.PART, "Part1")
+    model = object()
+    executor._documents[handle.id] = model
+    executor._document_handles[handle.id] = handle
+    executor._created_document_ids.add(handle.id)
+    executor._created_documents[handle.id] = model
+    executor._application = object()
+    path = tmp_path / "Part1.SLDPRT"
+    path.write_bytes(b"cadipy-created")
+    executor.close = lambda document, **kwargs: (
+        executor._documents.pop(document.id),
+        executor._document_handles.pop(document.id),
+    )
+    monkeypatch.setattr(solidworks_documents, "list_open_documents", lambda application: ())
+
+    created = replace(
+        snapshot(created_resource=True, document_id=handle.id),
+        file_path=path,
+        file_existed_before=False,
+        file_created_by_scope=True,
+    )
+    executor.rollback_mutation(created)
+
+    assert not path.exists()
+    assert executor.verify_rollback(created) is True
+
+
+def test_overwritten_existing_file_keeps_rollback_uncertain(tmp_path, monkeypatch) -> None:
+    executor = PythonComSolidWorksExecutor()
+    handle = DocumentHandle("doc-1", DocumentType.PART, "Part1")
+    model = FakeModel(FakeExtension())
+    executor._documents[handle.id] = model
+    executor._document_handles[handle.id] = handle
+    executor._document_fingerprint = lambda document: "before"
+    path = tmp_path / "existing.SLDPRT"
+    path.write_bytes(b"user-file")
+    target = replace(
+        snapshot(),
+        file_path=path,
+        file_existed_before=True,
+        file_created_by_scope=False,
+        file_overwritten=True,
+    )
+    executor.begin_mutation(target)
+    executor.rollback_mutation(target)
+
+    assert path.read_bytes() == b"user-file"
+    assert executor.verify_rollback(target) is False
+
+
+def test_save_rejects_existing_destination_before_com_save(tmp_path) -> None:
+    executor = PythonComSolidWorksExecutor()
+    handle = DocumentHandle("doc-1", DocumentType.PART, "Part1")
+    executor._documents[handle.id] = object()
+    destination = tmp_path / "existing.SLDPRT"
+    destination.write_bytes(b"user-file")
+
+    with pytest.raises(FileConflictError):
+        executor.save(handle, destination)
+
+
 def test_created_resource_rollback_closes_only_owned_document(monkeypatch) -> None:
     executor = PythonComSolidWorksExecutor()
     handle = DocumentHandle("created-1", DocumentType.PART, "Part1")
@@ -72,7 +135,7 @@ def test_created_resource_rollback_closes_only_owned_document(monkeypatch) -> No
     executor._created_documents[handle.id] = model
     executor._application = object()
     closed: list[str] = []
-    executor.close = lambda document: (
+    executor.close = lambda document, **kwargs: (
         closed.append(document.id),
         executor._documents.pop(document.id),
         executor._document_handles.pop(document.id),
@@ -113,7 +176,7 @@ def test_close_failure_does_not_verify_created_resource_rollback(monkeypatch) ->
     executor._document_handles[handle.id] = handle
     executor._created_document_ids.add(handle.id)
     executor._created_documents[handle.id] = model
-    executor.close = lambda document: (_ for _ in ()).throw(RuntimeError("close failed"))
+    executor.close = lambda document, **kwargs: (_ for _ in ()).throw(RuntimeError("close failed"))
     executor._application = object()
     monkeypatch.setattr(solidworks_documents, "list_open_documents", lambda application: (model,))
 
@@ -133,7 +196,7 @@ def test_local_cache_removal_without_live_close_is_unverifiable(monkeypatch) -> 
     executor._created_document_ids.add(handle.id)
     executor._created_documents[handle.id] = model
     executor._application = object()
-    executor.close = lambda document: (
+    executor.close = lambda document, **kwargs: (
         executor._documents.pop(document.id),
         executor._document_handles.pop(document.id),
     )

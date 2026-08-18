@@ -20,6 +20,10 @@ class MutationSnapshot:
     model_fingerprint: str | None = None
     created_resource: bool = False
     created_resource_id: str | None = None
+    file_path: Path | None = None
+    file_existed_before: bool | None = None
+    file_created_by_scope: bool = False
+    file_overwritten: bool = False
 
 
 class MutationCapability(Protocol):
@@ -37,6 +41,8 @@ class MutationCapability(Protocol):
 
     def verify_rollback(self, snapshot: MutationSnapshot) -> bool: ...
 
+    def record_created_file(self, path: Path, *, existed_before: bool) -> None: ...
+
 
 MutationAction = Callable[[], Any]
 
@@ -44,7 +50,13 @@ MutationAction = Callable[[], Any]
 class MutationScope:
     """Execute one bounded mutation and make rollback certainty explicit."""
 
-    def __init__(self, capability: MutationCapability, snapshot: MutationSnapshot) -> None:
+    def __init__(
+        self,
+        capability: MutationCapability,
+        snapshot: MutationSnapshot,
+        *,
+        require_rebuild: bool = True,
+    ) -> None:
         self.capability = capability
         self.snapshot = snapshot
         self.report = ExecutionReport(
@@ -57,6 +69,11 @@ class MutationScope:
         self._rollback_attempted = False
         self._rebuild_succeeded = False
         self._rollback_error: BaseException | None = None
+        self._require_rebuild = require_rebuild
+
+    @property
+    def rebuild_succeeded(self) -> bool:
+        return self._rebuild_succeeded
 
     def __enter__(self) -> MutationScope:  # noqa: PYI034
         try:
@@ -129,10 +146,27 @@ class MutationScope:
             self.snapshot,
             created_resource=True,
             created_resource_id=resource_id,
+            file_path=self.snapshot.file_path,
+            file_existed_before=self.snapshot.file_existed_before,
+            file_created_by_scope=self.snapshot.file_created_by_scope,
+            file_overwritten=self.snapshot.file_overwritten,
         )
         record = getattr(self.capability, "record_created_resource", None)
         if record is not None:
             record(resource_id)
+
+    def mark_file_created(self, path: Path) -> None:
+        self._require_entered("mark_file_created")
+        existed_before = self.snapshot.file_existed_before
+        self.snapshot = replace(
+            self.snapshot,
+            file_path=path,
+            file_created_by_scope=existed_before is False,
+            file_overwritten=existed_before is True,
+        )
+        record = getattr(self.capability, "record_created_file", None)
+        if callable(record):
+            record(path, existed_before=bool(existed_before))
 
     def rebuild(self, action: MutationAction | None = None) -> Any:
         self._require_entered("rebuild")
@@ -159,7 +193,7 @@ class MutationScope:
     def verify(self, postconditions: Iterable[MutationAction]) -> None:
         self._require_entered("verify")
         try:
-            if not self._rebuild_succeeded:
+            if self._require_rebuild and not self._rebuild_succeeded:
                 raise TransactionError(  # noqa: TRY301
                     "mutation scope requires successful rebuild before verification"
                 )
@@ -264,6 +298,8 @@ def snapshot_for_document(
     dirty: bool | None = None,
     save_observation: str | None = None,
     model_fingerprint: str | None = None,
+    file_path: Path | None = None,
+    file_existed_before: bool | None = None,
 ) -> MutationSnapshot:
     """Build a snapshot from a serializable document handle."""
     return MutationSnapshot(
@@ -278,4 +314,6 @@ def snapshot_for_document(
         save_observation=save_observation,
         model_fingerprint=model_fingerprint,
         created_resource=created_resource,
+        file_path=file_path,
+        file_existed_before=file_existed_before,
     )

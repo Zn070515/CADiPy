@@ -7,7 +7,12 @@ from typing import Any
 from uuid import uuid4
 
 from cadipy.domain.documents import DocumentType
-from cadipy.domain.errors import ComOperationError, DocumentTypeError
+from cadipy.domain.errors import (
+    ComOperationError,
+    DocumentDirtyError,
+    DocumentTypeError,
+    InvalidArgumentError,
+)
 
 SW_DOC_PART = 1
 SW_DOC_ASSEMBLY = 2
@@ -128,15 +133,73 @@ def active_document(application: Any) -> Any | None:
         ) from exc
 
 
-def close_document(application: Any, document: Any) -> None:
+def close_document(
+    application: Any,
+    document: Any,
+    *,
+    save: bool = False,
+    discard: bool = False,
+    require_clean: bool | None = None,
+) -> None:
+    if save and discard:
+        raise InvalidArgumentError(
+            "document.close cannot request both save and discard",
+            operation="solidworks.close",
+        )
+    if require_clean and (save or discard):
+        raise InvalidArgumentError(
+            "document.close require_clean cannot be combined with save or discard",
+            operation="solidworks.close",
+        )
+    if not save and not discard and require_clean is False:
+        raise InvalidArgumentError(
+            "document.close requires save, discard, or require_clean=True",
+            operation="solidworks.close",
+        )
+    if not save and not discard and require_clean is None:
+        require_clean = True
     try:
         title = str(document.GetTitle)
-        application.CloseDoc(title)
+        dirty = bool(_com_value(document, "GetSaveFlag"))
+        if dirty and require_clean:
+            raise DocumentDirtyError(  # noqa: TRY301
+                "document has unsaved changes; choose save or discard explicitly",
+                operation="solidworks.close",
+                details={"title": title},
+            )
+        if dirty and save:
+            _save_current_document(document)
+        if dirty and discard:
+            application.QuitDoc(title)
+        else:
+            application.CloseDoc(title)
     except Exception as exc:
+        if isinstance(exc, (DocumentDirtyError, InvalidArgumentError)):
+            raise
         raise ComOperationError(
             "SOLIDWORKS could not close the owned document",
             operation="solidworks.close",
         ) from exc
+
+
+def _save_current_document(document: Any) -> None:
+    try:
+        saved = bool(document.Save3(SW_SAVE_SILENT, None, None))
+    except Exception as exc:
+        raise ComOperationError(
+            "SOLIDWORKS could not save the dirty document before close",
+            operation="solidworks.close.save",
+        ) from exc
+    if not saved:
+        raise ComOperationError(
+            "SOLIDWORKS returned a failed save status before close",
+            operation="solidworks.close.save",
+        )
+
+
+def _com_value(obj: Any, name: str) -> Any:
+    value = getattr(obj, name)
+    return value() if callable(value) else value
 
 
 def document_type(document: Any) -> DocumentType:

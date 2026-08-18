@@ -133,7 +133,7 @@ def test_parametric_sketch_entity_roundtrip_and_dimension_mutation(
             params={"path": str(saved_path)},
         )
         assert saved_path.is_file()
-        solidworks_session.close(target=document)
+        solidworks_session.close(target=document, discard=True)
         reopened = solidworks_session.open(saved_path)
         reopened_target = {"path": str(saved_path), "document_type": "part"}
         reopened_sketches = _execute(
@@ -184,7 +184,10 @@ def test_parametric_sketch_entity_roundtrip_and_dimension_mutation(
     finally:
         if reopened is not None:
             with suppress(Exception):
-                solidworks_session.close(target={"path": str(saved_path), "document_type": "part"})
+                solidworks_session.close(
+                    target={"path": str(saved_path), "document_type": "part"},
+                    discard=True,
+                )
         else:
             with suppress(Exception):
-                solidworks_session.close(target=document)
+                solidworks_session.close(target=document, discard=True)

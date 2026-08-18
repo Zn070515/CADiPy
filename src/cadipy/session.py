@@ -151,8 +151,14 @@ class CadipySession:
         self,
         *,
         target: Mapping[str, Any] | DocumentHandle,
+        save: bool = False,
+        discard: bool = False,
+        require_clean: bool | None = None,
     ) -> OperationResult:
-        result = self.execute("document.close", target=target)
+        params: dict[str, Any] = {"save": save, "discard": discard}
+        if require_clean is not None:
+            params["require_clean"] = require_clean
+        result = self.execute("document.close", target=target, params=params)
         self._host.submit(self._reconcile_registry)
         return result
 

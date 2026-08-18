@@ -59,7 +59,11 @@ def _mutation_capability(executor: SolidWorksExecutor) -> MutationCapability | N
         "rollback_mutation",
         "verify_rollback",
     )
-    return executor if all(hasattr(executor, name) for name in required) else None
+    return (
+        cast("MutationCapability", executor)
+        if all(hasattr(executor, name) for name in required)
+        else None
+    )
 
 
 class OperationDispatcher:
@@ -279,11 +283,39 @@ class OperationDispatcher:
             return _handle_dict(self.executor.open_document(Path(params["path"]), document_type))
         if operation == "document.close":
             assert target is not None
-            self.executor.close(target)
+            save = params["save"]
+            discard = params["discard"]
+            require_clean = params.get("require_clean")
+            if save and discard:
+                raise InvalidArgumentError(
+                    "document.close cannot request both save and discard",
+                    operation=operation,
+                )
+            if (save or discard) and require_clean:
+                raise InvalidArgumentError(
+                    "document.close require_clean cannot be combined with save or discard",
+                    operation=operation,
+                )
+            if not save and not discard and require_clean is False:
+                raise InvalidArgumentError(
+                    "document.close requires save, discard, or require_clean=True",
+                    operation=operation,
+                )
+            effective_require_clean = not save and not discard
+            self.executor.close(
+                target,
+                save=save,
+                discard=discard,
+                require_clean=effective_require_clean,
+            )
             return {"closed_document_id": target.id}
         if operation == "document.save":
             assert target is not None
-            saved = self.executor.save(target, Path(params["path"]))
+            saved = self.executor.save(
+                target,
+                Path(params["path"]),
+                overwrite=params["overwrite"],
+            )
             if not saved.success:
                 raise TransactionError(
                     "SOLIDWORKS did not save the requested document",
@@ -445,7 +477,7 @@ class OperationDispatcher:
                     "rectangular extrusion requires semantic rollback capability",
                     operation=operation,
                 )
-            save: Any = None
+            save_report: Any = None
             reopened: DocumentHandle | None = None
             reopened_rebuild: Any = None
             reopened_inspection: Any = None
@@ -480,8 +512,16 @@ class OperationDispatcher:
                 postconditions: list[MutationAction] = [lambda: verification.passed]
                 if params.get("save_path"):
                     path = Path(params["save_path"])
-                    save = scope.step("save", lambda: self.executor.save(document, path))
-                    if not getattr(save, "success", False):
+                    scope.mark_file_created(path)
+                    save_report = scope.step(
+                        "save",
+                        lambda: self.executor.save(
+                            document,
+                            path,
+                            overwrite=params["overwrite"],
+                        ),
+                    )
+                    if not getattr(save_report, "success", False):
                         raise TransactionError("CADiPy save did not succeed")
                     scope.step("close", lambda: self.executor.close(document))
                     reopened = scope.step("reopen", lambda: self.executor.reopen(path))
@@ -510,12 +550,12 @@ class OperationDispatcher:
                 "inspection": _dict(inspection),
             }
             if params.get("save_path"):
-                assert save is not None
+                assert save_report is not None
                 assert reopened is not None
                 assert reopened_rebuild is not None
                 assert reopened_inspection is not None
                 assert reopened_verification is not None
-                data["save"] = _dict(save)
+                data["save"] = _dict(save_report)
                 data["reopened_document"] = _handle_dict(reopened)
                 data["reopened_rebuild"] = "ok" if reopened_rebuild.success else "failed"
                 data["reopened_inspection"] = _dict(reopened_inspection)

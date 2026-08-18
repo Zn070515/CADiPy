@@ -107,11 +107,24 @@ class FakeExecutor:
         self.calls.append("rebuild")
         return RebuildReport(True)
 
-    def save(self, document: DocumentHandle, path: Path) -> SaveReport:
+    def save(
+        self,
+        document: DocumentHandle,
+        path: Path,
+        *,
+        overwrite: bool = False,
+    ) -> SaveReport:
         self.calls.append("save")
         return SaveReport(True, path)
 
-    def close(self, document: DocumentHandle) -> None:
+    def close(
+        self,
+        document: DocumentHandle,
+        *,
+        save: bool = False,
+        discard: bool = False,
+        require_clean: bool | None = None,
+    ) -> None:
         self.calls.append("close")
 
     def reopen(self, path: Path) -> DocumentHandle:
@@ -263,6 +276,56 @@ def test_save_path_reopen_failure_rolls_back_owned_resources() -> None:
     assert executor.owned_ids == set()
     assert executor.mutation_calls == ["begin", "created:doc-1", "rollback", "verify_rollback"]
     assert executor.calls[-3:] == ["save", "close", "reopen"]
+
+
+def test_document_save_defaults_to_no_overwrite_and_passes_explicit_policy() -> None:
+    executor = SavePolicyExecutor()
+    document = DocumentHandle("doc-a", DocumentType.PART, "PartA")
+    dispatcher = OperationDispatcher(executor, target_resolver=lambda binding: document)
+
+    dispatcher.dispatch(
+        {
+            "id": "save-default",
+            "operation": "document.save",
+            "target": {"document_id": document.id},
+            "params": {"path": "part.SLDPRT"},
+        }
+    )
+    dispatcher.dispatch(
+        {
+            "id": "save-overwrite",
+            "operation": "document.save",
+            "target": {"document_id": document.id},
+            "params": {"path": "part.SLDPRT", "overwrite": True},
+        }
+    )
+
+    assert executor.save_overwrites == [False, True]
+
+
+def test_document_close_requires_explicit_dirty_document_policy() -> None:
+    executor = ClosePolicyExecutor()
+    document = DocumentHandle("doc-a", DocumentType.PART, "PartA")
+    dispatcher = OperationDispatcher(executor, target_resolver=lambda binding: document)
+
+    dispatcher.dispatch(
+        {
+            "id": "close-clean",
+            "operation": "document.close",
+            "target": {"document_id": document.id},
+            "params": {"require_clean": True},
+        }
+    )
+    dispatcher.dispatch(
+        {
+            "id": "close-save",
+            "operation": "document.close",
+            "target": {"document_id": document.id},
+            "params": {"save": True},
+        }
+    )
+
+    assert executor.close_policies == [(False, False, True), (True, False, False)]
 
 
 def test_unsuccessful_rebuild_fails_and_rolls_back() -> None:
@@ -688,7 +751,14 @@ class LifecycleFakeExecutor(FakeExecutor):
         self.calls.append("active_document")
         return DocumentHandle("doc-a", DocumentType.PART, "PartA", active=True)
 
-    def close(self, document: DocumentHandle) -> None:
+    def close(
+        self,
+        document: DocumentHandle,
+        *,
+        save: bool = False,
+        discard: bool = False,
+        require_clean: bool | None = None,
+    ) -> None:
         self.calls.append("close")
         self.closed_ids.append(document.id)
 
@@ -765,6 +835,32 @@ class PersistenceFailureExecutor(FakeExecutor):
     def rollback_mutation(self, snapshot: object) -> None:
         super().rollback_mutation(snapshot)
         self.owned_ids.clear()
+
+
+class SavePolicyExecutor(FakeExecutor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.save_overwrites: list[bool] = []
+
+    def save(self, document: DocumentHandle, path: Path, *, overwrite: bool = False) -> SaveReport:
+        self.save_overwrites.append(overwrite)
+        return SaveReport(True, path)
+
+
+class ClosePolicyExecutor(FakeExecutor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.close_policies: list[tuple[bool, bool, bool]] = []
+
+    def close(
+        self,
+        document: DocumentHandle,
+        *,
+        save: bool = False,
+        discard: bool = False,
+        require_clean: bool = True,
+    ) -> None:
+        self.close_policies.append((save, discard, require_clean))
 
 
 class VisibilityMismatchExecutor:

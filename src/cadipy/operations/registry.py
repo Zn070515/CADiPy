@@ -131,7 +131,11 @@ OPERATION_REGISTRY: dict[str, OpSpec] = {
         description="Close one explicitly bound SOLIDWORKS document.",
         mutating=True,
         target_required=True,
-        parameters={},
+        parameters={
+            "save": ParamSpec(type=ParamType.BOOLEAN, default=False),
+            "discard": ParamSpec(type=ParamType.BOOLEAN, default=False),
+            "require_clean": ParamSpec(type=ParamType.BOOLEAN),
+        },
         target_document_types=("part", "assembly", "drawing"),
         result_document_types=(),
     ),
@@ -140,7 +144,10 @@ OPERATION_REGISTRY: dict[str, OpSpec] = {
         description="Save one explicitly bound SOLIDWORKS document to a requested path.",
         mutating=True,
         target_required=True,
-        parameters={"path": ParamSpec(type=ParamType.PATH, required=True)},
+        parameters={
+            "path": ParamSpec(type=ParamType.PATH, required=True),
+            "overwrite": ParamSpec(type=ParamType.BOOLEAN, default=False),
+        },
         target_document_types=("part", "assembly", "drawing"),
         result_document_types=(),
     ),
@@ -340,6 +347,7 @@ OPERATION_REGISTRY: dict[str, OpSpec] = {
             "height_mm": ParamSpec(type=ParamType.NUMBER, required=True, unit="mm"),
             "plane": ParamSpec(type=ParamType.STRING, required=False, default="Front Plane"),
             "save_path": ParamSpec(type=ParamType.PATH, required=False),
+            "overwrite": ParamSpec(type=ParamType.BOOLEAN, default=False),
             "width_mm": ParamSpec(type=ParamType.NUMBER, required=True, unit="mm"),
         },
         postconditions=(

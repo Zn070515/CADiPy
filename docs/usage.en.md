@@ -45,7 +45,7 @@ An ordinary command exception, including a backend or COM exception raised by th
 
 Mutation scopes make one bounded rollback attempt. `rollback_status` is one of `not_attempted`, `rolled_back`, `rollback_failed`, or `state_uncertain`. `rolled_back` is reported only when rollback is observably verified; a failed or unverifiable rollback requires session cleanup and reconnection before another mutation. This is not an ACID or crash-safe transaction and provides no exactly-once guarantee.
 
-`connect()` starts in attach mode, while `launch()` starts a new session in launch mode. Keep those modes separate: do not call `application.launch` through a session that was already attached with `connect()`. The current backend retains the attached application reference but changes its mode and ownership flag to launch-owned, so disconnect may call `ExitApp` on the previously attached instance. The implementation does not currently reject this transition; if launch is needed, end the attach session first and create a new `launch()` session. Rollback cleanup closes only documents or resources explicitly created and owned by CADiPy.
+`connect()` starts in attach mode, while `launch()` starts a new session in launch mode. The executor records this ownership state: repeated acquisition in the same mode is idempotent, while an attach/launch mode conflict raises `application_ownership_conflict`. Disconnect calls `ExitApp` only for an application acquired through the owned launch mode. Rollback cleanup closes only documents or resources explicitly created and owned by CADiPy.
 
 Use a persistent session when several operations belong to one SOLIDWORKS workflow. `connect()` strictly attaches to an already-running instance and preserves its current window visibility by default; use explicit `launch()` when CADiPy should create and own a new instance. `launch()` shows the new window by default, while automation can request `launch(visible=False)`. Session-local `document_id` values expire at session exit. Rebind a saved document in a later session by path, title, document type, or configuration.
 
@@ -70,6 +70,8 @@ with launch(visible=True) as cad:
 ```
 
 `application.info` reports the current `visible` state, and protocol clients can call `application.set_visibility`. Public APIs never return SOLIDWORKS COM objects.
+
+Document persistence is explicit. `document.save` and `part.create_rectangular_extrude(save_path=...)` use `overwrite=False` by default and raise `file_conflict` before replacing an existing destination; pass `overwrite=True` only when replacement is intentional. Closing a document defaults to `require_clean`: a dirty document must be closed with `save=True` or `discard=True`, and rollback uses an explicit discard for CADiPy-owned temporary documents. A newly created exact save path is removed during a verified rollback; an overwritten existing path cannot claim certain rollback without a backup.
 
 Document targets must explicitly provide at least one of `document_id`, `path`, `title`, `document_type`, or `configuration`. Each operation resolves its target once before backend execution, so changing the SOLIDWORKS active document cannot redirect an explicitly bound operation. `document.list`, `document.active`, `document.open`, and `document.close` use the same session registry.
 

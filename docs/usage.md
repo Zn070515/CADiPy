@@ -45,7 +45,7 @@ with launch(visible=False) as cad:
 
 mutation scope 只做有边界的一次回滚尝试。`rollback_status` 的值为 `not_attempted`、`rolled_back`、`rollback_failed` 或 `state_uncertain`。只有回滚观察得到验证时才报告 `rolled_back`；回滚失败或无法证明状态时，后续 mutation 必须等 session 清理并重新连接。该机制不是 ACID 事务、不是 crash-safe 事务，也不提供 exactly-once 保证。
 
-`connect()` 以 attach 模式开始，`launch()` 以 launch 模式创建新的 session。安全生命周期要求两种模式分开：不要在已经 attach 的 session 中调用 `application.launch`。当前 backend 会保留已附着的 application 引用，却把连接模式和 ownership 标记改成 launch-owned；随后断开可能对原先附着的实例调用 `ExitApp`。实现当前不会拒绝这个 transition；需要 launch 时，应先结束 attach session，再创建新的 `launch()` session。回滚只清理 CADiPy 创建且明确归其所有的文档或资源。
+`connect()` 以 attach 模式开始，`launch()` 以 launch 模式创建新的 session。executor 会记录 application ownership 状态：同一模式的重复 acquisition 是幂等的，attach/launch 冲突会抛出稳定错误码 `application_ownership_conflict`。只有通过 launch 创建并归 CADiPy 所有的 application，断开时才会调用 `ExitApp`。回滚只清理 CADiPy 创建且明确归其所有的文档或资源。
 
 持续操作同一个 SOLIDWORKS 工程时使用持久 session。`connect()` 严格 attach 到已运行实例，默认保持其当前窗口可见性；需要 CADiPy 创建并拥有新实例时显式使用 `launch()`，默认显示窗口。自动化场景可使用 `launch(visible=False)`。session 结束后其中的 `document_id` 失效，已保存文档应使用路径、标题、类型或 configuration 重新绑定。
 
@@ -70,6 +70,8 @@ with launch(visible=True) as cad:
 ```
 
 `application.info` 返回当前 `visible` 状态；协议客户端也可调用 `application.set_visibility`。公共 API 不返回 SOLIDWORKS COM 对象。
+
+文档持久化必须显式选择。`document.save` 和 `part.create_rectangular_extrude(save_path=...)` 默认使用 `overwrite=False`；目标已存在时，在替换文件前抛出 `file_conflict`，只有明确传入 `overwrite=True` 才允许覆盖。关闭文档默认要求 `require_clean`；dirty 文档必须传 `save=True` 或 `discard=True`。回滚 CADiPy 创建的临时文档时会显式 discard；新建且由本次 mutation 创建的精确文件路径会在可验证回滚时删除，已覆盖的既有文件在没有备份时不能声称回滚确定。
 
 文档目标必须显式提供 `document_id`、`path`、`title`、`document_type` 或 `configuration` 中的至少一项。每个操作开始前只解析一次目标；SOLIDWORKS 当前 active document 改变不会把明确目标切换到另一文档。`document.list`、`document.active`、`document.open` 和 `document.close` 也通过同一 session registry 工作。
 

@@ -247,9 +247,22 @@ class SolidWorksExecutor(Protocol):
 
     def rebuild(self, document: DocumentHandle) -> RebuildReport: ...
 
-    def save(self, document: DocumentHandle, path: Path) -> SaveReport: ...
+    def save(
+        self,
+        document: DocumentHandle,
+        path: Path,
+        *,
+        overwrite: bool = False,
+    ) -> SaveReport: ...
 
-    def close(self, document: DocumentHandle) -> None: ...
+    def close(
+        self,
+        document: DocumentHandle,
+        *,
+        save: bool = False,
+        discard: bool = False,
+        require_clean: bool | None = None,
+    ) -> None: ...
 
     def reopen(self, path: Path) -> DocumentHandle: ...
 
