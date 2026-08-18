@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import pytest
 
 from cadipy.backends.executor import DocumentHandle
+from cadipy.backends.solidworks import documents as solidworks_documents
 from cadipy.backends.solidworks.executor import PythonComSolidWorksExecutor
 from cadipy.domain.documents import DocumentType
 from cadipy.domain.errors import ComOperationError
@@ -50,23 +51,87 @@ def snapshot(*, created_resource: bool = False, document_id: str = "doc-1") -> M
     )
 
 
-def test_created_resource_rollback_closes_only_owned_document() -> None:
+def test_created_resource_rollback_closes_only_owned_document(monkeypatch) -> None:
     executor = PythonComSolidWorksExecutor()
     handle = DocumentHandle("created-1", DocumentType.PART, "Part1")
-    executor._documents[handle.id] = object()
+    model = object()
+    executor._documents[handle.id] = model
     executor._document_handles[handle.id] = handle
+    executor._created_document_ids.add(handle.id)
+    executor._created_documents[handle.id] = model
+    executor._application = object()
     closed: list[str] = []
     executor.close = lambda document: (
         closed.append(document.id),
         executor._documents.pop(document.id),
         executor._document_handles.pop(document.id),
     )
+    monkeypatch.setattr(solidworks_documents, "list_open_documents", lambda application: ())
 
     created = snapshot(created_resource=True, document_id=handle.id)
     executor.rollback_mutation(created)
 
     assert closed == [handle.id]
     assert executor.verify_rollback(created) is True
+
+
+def test_unowned_created_resource_cannot_be_closed() -> None:
+    executor = PythonComSolidWorksExecutor()
+    handle = DocumentHandle("user-doc", DocumentType.PART, "UserPart")
+    executor._documents[handle.id] = object()
+    executor._document_handles[handle.id] = handle
+
+    with pytest.raises(ComOperationError):
+        executor.rollback_mutation(snapshot(created_resource=True, document_id=handle.id))
+
+
+def test_mismatched_created_resource_id_is_rejected() -> None:
+    executor = PythonComSolidWorksExecutor()
+    pending = snapshot(created_resource=True, document_id="pending")
+    executor.begin_mutation(pending)
+
+    with pytest.raises(ComOperationError):
+        executor.record_created_resource("not-created")
+
+
+def test_close_failure_does_not_verify_created_resource_rollback(monkeypatch) -> None:
+    executor = PythonComSolidWorksExecutor()
+    handle = DocumentHandle("created-1", DocumentType.PART, "Part1")
+    model = object()
+    executor._documents[handle.id] = model
+    executor._document_handles[handle.id] = handle
+    executor._created_document_ids.add(handle.id)
+    executor._created_documents[handle.id] = model
+    executor.close = lambda document: (_ for _ in ()).throw(RuntimeError("close failed"))
+    executor._application = object()
+    monkeypatch.setattr(solidworks_documents, "list_open_documents", lambda application: (model,))
+
+    created = snapshot(created_resource=True, document_id=handle.id)
+    with pytest.raises(RuntimeError):
+        executor.rollback_mutation(created)
+
+    assert executor.verify_rollback(created) is False
+
+
+def test_local_cache_removal_without_live_close_is_unverifiable(monkeypatch) -> None:
+    executor = PythonComSolidWorksExecutor()
+    handle = DocumentHandle("created-1", DocumentType.PART, "Part1")
+    model = object()
+    executor._documents[handle.id] = model
+    executor._document_handles[handle.id] = handle
+    executor._created_document_ids.add(handle.id)
+    executor._created_documents[handle.id] = model
+    executor._application = object()
+    executor.close = lambda document: (
+        executor._documents.pop(document.id),
+        executor._document_handles.pop(document.id),
+    )
+    monkeypatch.setattr(solidworks_documents, "list_open_documents", lambda application: (model,))
+
+    created = snapshot(created_resource=True, document_id=handle.id)
+    executor.rollback_mutation(created)
+
+    assert executor.verify_rollback(created) is False
 
 
 def test_existing_target_rollback_finishes_recording_and_checks_fingerprint() -> None:
@@ -138,6 +203,20 @@ def test_void_undo_with_changed_fingerprint_is_not_rolled_back() -> None:
     executor._document_handles[handle.id] = handle
     executor._document_fingerprint = lambda document: "after"
     target = snapshot()
+    executor.begin_mutation(target)
+
+    executor.rollback_mutation(target)
+
+    assert executor.verify_rollback(target) is False
+
+
+def test_missing_fingerprint_is_state_unverifiable() -> None:
+    model = FakeModel(FakeExtension(), undo_result=None)
+    executor = PythonComSolidWorksExecutor()
+    handle = DocumentHandle("doc-1", DocumentType.PART, "Part1")
+    executor._documents[handle.id] = model
+    executor._document_handles[handle.id] = handle
+    target = replace(snapshot(), model_fingerprint=None)
     executor.begin_mutation(target)
 
     executor.rollback_mutation(target)

@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
-from cadipy.domain.errors import RebuildError, TransactionError, VerificationError
+from cadipy.domain.errors import CadipyError, RebuildError, TransactionError, VerificationError
 from cadipy.domain.execution import ExecutionPhase, ExecutionReport, RollbackStatus
 from cadipy.domain.identities import DocumentIdentity
 
@@ -49,6 +49,7 @@ class MutationScope:
         self._entered = False
         self._finished = False
         self._rollback_attempted = False
+        self._rebuild_succeeded = False
 
     def __enter__(self) -> MutationScope:  # noqa: PYI034
         try:
@@ -60,6 +61,7 @@ class MutationScope:
                 rollback_status=RollbackStatus.STATE_UNCERTAIN,
             )
             self._finished = True
+            self._attach_execution(exc)
             error = TransactionError("mutation scope could not begin")
             error.execution = self.report
             raise error from exc
@@ -109,6 +111,7 @@ class MutationScope:
                     details={"errors": tuple(getattr(result, "errors", ()))},
                 )
             self.report = self.report.transition(ExecutionPhase.REBUILT)
+            self._rebuild_succeeded = True
         except BaseException as exc:
             self._fail(exc, label="rebuild")
             raise
@@ -117,6 +120,10 @@ class MutationScope:
 
     def verify(self, postconditions: Iterable[MutationAction]) -> None:
         try:
+            if not self._rebuild_succeeded:
+                raise TransactionError(  # noqa: TRY301
+                    "mutation scope requires successful rebuild before verification"
+                )
             for postcondition in postconditions:
                 if not postcondition():
                     raise VerificationError(  # noqa: TRY301
@@ -130,7 +137,7 @@ class MutationScope:
     def commit(self) -> ExecutionReport:
         if self._finished:
             return self.report
-        if self.report.phase is not ExecutionPhase.VERIFIED:
+        if self.report.phase is not ExecutionPhase.VERIFIED or not self._rebuild_succeeded:
             error = TransactionError(
                 "mutation scope requires successful verification before commit"
             )
@@ -174,8 +181,7 @@ class MutationScope:
 
     def _fail(self, cause: BaseException, *, label: str | None = None) -> None:
         self.rollback()
-        if hasattr(cause, "execution"):
-            cause.execution = self.report
+        self._attach_execution(cause)
         if self.report.rollback_status in {
             RollbackStatus.ROLLBACK_FAILED,
             RollbackStatus.STATE_UNCERTAIN,
@@ -186,6 +192,12 @@ class MutationScope:
             )
             error.execution = self.report
             raise error from cause
+
+    def _attach_execution(self, cause: BaseException) -> None:
+        if isinstance(cause, CadipyError):
+            cause.execution = self.report
+        else:
+            setattr(cause, "execution", self.report)  # noqa: B010
 
 
 def snapshot_for_document(

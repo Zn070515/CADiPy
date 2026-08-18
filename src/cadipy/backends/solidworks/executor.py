@@ -74,6 +74,8 @@ class PythonComSolidWorksExecutor:
         self._application: Any = None
         self._documents: dict[str, Any] = {}
         self._document_handles: dict[str, DocumentHandle] = {}
+        self._created_document_ids: set[str] = set()
+        self._created_documents: dict[str, Any] = {}
         self._sketches: dict[str, Any] = {}
         self._sketch_handles: dict[str, SketchHandle] = {}
         self._geometries: dict[str, Any] = {}
@@ -181,6 +183,8 @@ class PythonComSolidWorksExecutor:
         self._sketch_handles.clear()
         self._documents.clear()
         self._document_handles.clear()
+        self._created_document_ids.clear()
+        self._created_documents.clear()
         self._rebuild_documents.clear()
         self._application = None
         self._owns_application = False
@@ -222,15 +226,26 @@ class PythonComSolidWorksExecutor:
         self._undo_recording = True
 
     def record_created_resource(self, resource_id: str) -> None:
-        if self._mutation_snapshot is not None:
-            self._mutation_snapshot = MutationSnapshot(
-                target_identity=self._mutation_snapshot.target_identity,
-                dirty=self._mutation_snapshot.dirty,
-                save_observation=self._mutation_snapshot.save_observation,
-                model_fingerprint=self._mutation_snapshot.model_fingerprint,
-                created_resource=True,
-                created_resource_id=resource_id,
+        if self._mutation_snapshot is None:
+            raise ComOperationError(
+                "created resource was recorded outside a mutation",
+                operation="solidworks.mutation.resource",
             )
+        if resource_id not in self._created_document_ids or resource_id not in self._documents:
+            raise ComOperationError(
+                "created resource is not owned by this executor",
+                operation="solidworks.mutation.resource",
+                details={"document_id": resource_id},
+            )
+        self._created_documents[resource_id] = self._documents[resource_id]
+        self._mutation_snapshot = MutationSnapshot(
+            target_identity=self._mutation_snapshot.target_identity,
+            dirty=self._mutation_snapshot.dirty,
+            save_observation=self._mutation_snapshot.save_observation,
+            model_fingerprint=self._mutation_snapshot.model_fingerprint,
+            created_resource=True,
+            created_resource_id=resource_id,
+        )
 
     def commit_mutation(self, snapshot: MutationSnapshot) -> None:
         model = self._documents.get(snapshot.target_identity.document_id)
@@ -251,9 +266,20 @@ class PythonComSolidWorksExecutor:
 
     def rollback_mutation(self, snapshot: MutationSnapshot) -> None:
         if snapshot.created_resource and snapshot.created_resource_id:
+            if snapshot.created_resource_id not in self._created_document_ids:
+                raise ComOperationError(
+                    "created resource is not owned by this executor",
+                    operation="solidworks.mutation.rollback",
+                    details={"document_id": snapshot.created_resource_id},
+                )
             document = self._documents.get(snapshot.created_resource_id)
-            if document is not None:
-                self.close(self._document_handles[snapshot.created_resource_id])
+            if document is None:
+                raise ComOperationError(
+                    "created resource is no longer available for rollback",
+                    operation="solidworks.mutation.rollback",
+                    details={"document_id": snapshot.created_resource_id},
+                )
+            self.close(self._document_handles[snapshot.created_resource_id])
         elif self._undo_recording:
             model = self._documents.get(snapshot.target_identity.document_id)
             extension = getattr(model, "Extension", None)
@@ -280,7 +306,13 @@ class PythonComSolidWorksExecutor:
 
     def verify_rollback(self, snapshot: MutationSnapshot) -> bool:
         if snapshot.created_resource and snapshot.created_resource_id:
-            return snapshot.created_resource_id not in self._documents
+            if snapshot.created_resource_id not in self._created_document_ids:
+                return False
+            document = self._created_documents.get(snapshot.created_resource_id)
+            if document is None:
+                return False
+            live_documents = documents.list_open_documents(self._require_application())
+            return not any(self._same_document(document, live) for live in live_documents)
         if not self._undo_attempted:
             return False
         if snapshot.model_fingerprint is None:
@@ -309,6 +341,7 @@ class PythonComSolidWorksExecutor:
         handle = self._document_handle(document)
         self._documents[handle.id] = document
         self._document_handles[handle.id] = handle
+        self._created_document_ids.add(handle.id)
         return handle
 
     def list_documents(self) -> tuple[DocumentHandle, ...]:

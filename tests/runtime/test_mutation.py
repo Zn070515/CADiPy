@@ -85,6 +85,7 @@ def test_mutation_scope_reports_begin_failure_without_mutating() -> None:
         scope.__enter__()
 
     assert caught.value.execution is scope.report
+    assert caught.value.__cause__.execution is scope.report
     assert scope.report.phase is ExecutionPhase.FAILED
     assert scope.report.state_certainty == "uncertain"
     assert scope.report.rollback_status is RollbackStatus.STATE_UNCERTAIN
@@ -95,13 +96,14 @@ def test_mutation_scope_rolls_back_after_commit_failure() -> None:
     capability = FakeMutationCapability(fail_commit=True)
     scope = MutationScope(capability, make_snapshot())
 
-    with pytest.raises(RuntimeError), scope:
+    with pytest.raises(RuntimeError) as caught, scope:
         scope.step("create feature", lambda: None)
         scope.rebuild()
         scope.verify((lambda: True,))
 
     assert scope.report.phase is ExecutionPhase.FAILED
     assert scope.report.rollback_status is RollbackStatus.ROLLED_BACK
+    assert caught.value.execution is scope.report
     assert capability.calls == ["begin", "rebuild", "commit", "rollback", "verify_rollback"]
 
 
@@ -121,12 +123,13 @@ def test_mutation_scope_reports_failed_rollback_as_typed_failure() -> None:
     capability = FakeMutationCapability(fail_rollback=True)
     scope = MutationScope(capability, make_snapshot())
 
-    with pytest.raises(TransactionError), scope:
+    with pytest.raises(TransactionError) as caught, scope:
         scope.step("forced failure", lambda: (_ for _ in ()).throw(ValueError("forced")))
 
     assert scope.report.phase is ExecutionPhase.FAILED
     assert scope.report.state_certainty == "uncertain"
     assert scope.report.rollback_status is RollbackStatus.ROLLBACK_FAILED
+    assert caught.value.execution is scope.report
     assert capability.calls == ["begin", "rollback"]
 
 
@@ -154,17 +157,26 @@ def test_mutation_scope_does_not_retry_after_uncertain_rollback() -> None:
     assert capability.calls == ["begin", "rollback", "verify_rollback"]
 
 
-def test_new_resource_snapshot_is_available_to_capability() -> None:
+def test_mutation_scope_rejects_verification_before_rebuild() -> None:
     capability = FakeMutationCapability()
     snapshot = make_snapshot(created_resource=True)
     scope = MutationScope(capability, snapshot)
 
-    with scope:
-        scope.step("create part", lambda: None)
-        scope.verify((lambda: True,))
-        scope.commit()
+    postconditions_called = False
 
-    assert snapshot.created_resource is True
+    def postcondition() -> bool:
+        nonlocal postconditions_called
+        postconditions_called = True
+        return True
+
+    with pytest.raises(TransactionError), scope:
+        scope.step("create part", lambda: None)
+        scope.verify((postcondition,))
+
+    assert scope.report.phase is ExecutionPhase.FAILED
+    assert scope.report.rollback_status is RollbackStatus.ROLLED_BACK
+    assert postconditions_called is False
+    assert capability.calls == ["begin", "rollback", "verify_rollback"]
 
 
 def test_unsuccessful_rebuild_rolls_back_before_verification_or_commit() -> None:
