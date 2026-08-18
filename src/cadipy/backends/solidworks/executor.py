@@ -1266,7 +1266,19 @@ class PythonComSolidWorksExecutor:
                 operation="solidworks.save",
                 details={"document_id": document.id, "path": str(path)},
             )
+        self._record_saved_document_path(document, path)
         return SaveReport(success=True, path=path)
+
+    def _record_saved_document_path(self, document: DocumentHandle, path: Path) -> None:
+        known = self._document_handles.get(document.id, document)
+        self._document_handles[document.id] = DocumentHandle(
+            id=known.id,
+            document_type=known.document_type,
+            title=known.title,
+            path=path,
+            configuration=known.configuration,
+            active=known.active,
+        )
 
     def close(self, document: DocumentHandle) -> None:
         documents.close_document(self._require_application(), self._document_object(document))
@@ -1373,9 +1385,8 @@ class PythonComSolidWorksExecutor:
         )
 
     def _handle_for_live_document(self, document: Any, *, active: bool = False) -> DocumentHandle:
-        for document_id, known in self._documents.items():
-            if self._same_document(known, document):
-                known_handle = self._document_handles[document_id]
+        for document_id, known_handle in self._document_handles.items():
+            if self._same_document(known_handle, document):
                 raw_path = str(document.GetPathName)
                 return DocumentHandle(
                     id=document_id,
@@ -1399,11 +1410,12 @@ class PythonComSolidWorksExecutor:
         return handle
 
     @staticmethod
-    def _same_document(left: Any, right: Any) -> bool:
+    def _same_document(left: DocumentHandle, right: Any) -> bool:
         try:
-            return left is right or (
-                left.GetPathName == right.GetPathName and left.GetTitle == right.GetTitle
-            )
+            right_path = str(right.GetPathName)
+            if left.path is not None and right_path:
+                return left.path.resolve() == Path(right_path).resolve()
+            return left.title == str(right.GetTitle)
         except Exception:
             return False
 

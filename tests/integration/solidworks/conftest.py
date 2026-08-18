@@ -193,10 +193,7 @@ def user_owned_application(request: pytest.FixtureRequest) -> Iterator[Callable[
         return
 
     def is_available() -> bool:
-        try:
-            return str(application.RevisionNumber) == EXPECTED_REVISION
-        except Exception:
-            return False
+        return bool(owned_process_ids.intersection(_solidworks_process_ids()))
 
     try:
         yield is_available
