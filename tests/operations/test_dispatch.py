@@ -21,6 +21,7 @@ from cadipy.backends.executor import (
 from cadipy.domain.documents import DocumentType
 from cadipy.domain.errors import (
     CapabilityUnavailableError,
+    ComOperationError,
     DocumentTypeError,
     FileConflictError,
     InvalidArgumentError,
@@ -43,6 +44,7 @@ from cadipy.domain.sketches import (
     SketchInspection,
 )
 from cadipy.operations.dispatch import OperationDispatcher
+from cadipy.protocol.result import OperationResult
 from cadipy.runtime.mutation import MutationScope, snapshot_for_document
 
 
@@ -386,6 +388,54 @@ def test_document_save_defaults_to_no_overwrite_and_passes_explicit_policy() -> 
     )
 
     assert executor.save_overwrites == [False, True]
+
+
+def test_document_save_conflict_is_certain_in_operation_result() -> None:
+    executor = ConflictSaveExecutor()
+    document = DocumentHandle("doc-conflict", DocumentType.PART, "PartConflict")
+    dispatcher = OperationDispatcher(executor, target_resolver=lambda binding: document)
+
+    with pytest.raises(FileConflictError) as caught:
+        dispatcher.dispatch(
+            {
+                "id": "document-save-conflict",
+                "operation": "document.save",
+                "target": {"document_id": document.id},
+                "params": {"path": "existing.SLDPRT"},
+            }
+        )
+
+    result = OperationResult.failure(
+        "document-save-conflict",
+        "document.save",
+        caught.value,
+    )
+    assert caught.value.execution.state_certainty == "certain"
+    assert caught.value.execution.rollback_status is RollbackStatus.NOT_ATTEMPTED
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error["code"] == "file_conflict"
+    assert result.execution == caught.value.execution
+    assert result.execution.state_certainty == "certain"
+
+
+def test_document_save_post_com_failure_remains_uncertain() -> None:
+    executor = PostComSaveFailureExecutor()
+    document = DocumentHandle("doc-post-com", DocumentType.PART, "PartPostCom")
+    dispatcher = OperationDispatcher(executor, target_resolver=lambda binding: document)
+
+    with pytest.raises(ComOperationError) as caught:
+        dispatcher.dispatch(
+            {
+                "id": "document-save-post-com-failure",
+                "operation": "document.save",
+                "target": {"document_id": document.id},
+                "params": {"path": "existing.SLDPRT", "overwrite": True},
+            }
+        )
+
+    assert caught.value.execution.state_certainty == "uncertain"
+    assert caught.value.execution.rollback_status is RollbackStatus.NOT_ATTEMPTED
 
 
 def test_document_close_requires_explicit_dirty_document_policy() -> None:
@@ -969,6 +1019,34 @@ class SavePolicyExecutor(FakeExecutor):
     def save(self, document: DocumentHandle, path: Path, *, overwrite: bool = False) -> SaveReport:
         self.save_overwrites.append(overwrite)
         return SaveReport(True, path)
+
+
+class ConflictSaveExecutor(FakeExecutor):
+    def save(
+        self,
+        document: DocumentHandle,
+        path: Path,
+        *,
+        overwrite: bool = False,
+    ) -> SaveReport:
+        raise FileConflictError(
+            "destination file already exists",
+            operation="solidworks.save",
+        )
+
+
+class PostComSaveFailureExecutor(FakeExecutor):
+    def save(
+        self,
+        document: DocumentHandle,
+        path: Path,
+        *,
+        overwrite: bool = False,
+    ) -> SaveReport:
+        raise ComOperationError(
+            "SOLIDWORKS could not save the document",
+            operation="solidworks.save",
+        )
 
 
 class ClosePolicyExecutor(FakeExecutor):

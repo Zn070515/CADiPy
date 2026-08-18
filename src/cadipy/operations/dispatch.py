@@ -14,6 +14,7 @@ from cadipy.domain.documents import DocumentType
 from cadipy.domain.errors import (
     CapabilityUnavailableError,
     DocumentTypeError,
+    FileConflictError,
     InvalidArgumentError,
     ProtocolError,
     TargetNotFoundError,
@@ -143,7 +144,9 @@ class OperationDispatcher:
                 )
                 failed = report.transition(
                     failure_phase,
-                    state_certainty="uncertain",
+                    state_certainty=(
+                        "certain" if isinstance(exc, FileConflictError) else "uncertain"
+                    ),
                     rollback_status=(
                         RollbackStatus.STATE_UNCERTAIN
                         if isinstance(exc, CapabilityUnavailableError)
