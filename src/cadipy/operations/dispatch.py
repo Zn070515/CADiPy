@@ -412,6 +412,9 @@ class OperationDispatcher:
             )
             capability = _mutation_capability(self.executor)
             if capability is None:
+                mark_uncertain = getattr(self.executor, "mark_mutation_uncertain", None)
+                if callable(mark_uncertain):
+                    mark_uncertain()
                 raise CapabilityUnavailableError(
                     "rectangular extrusion requires semantic rollback capability",
                     operation=operation,

@@ -200,6 +200,45 @@ def test_rectangular_extrude_rejects_unsupported_rollback_before_create() -> Non
     assert executor.created is False
 
 
+def test_unsupported_capability_persists_uncertainty_until_reconciliation() -> None:
+    executor = UnsupportedMutationExecutor()
+    document = DocumentHandle("unsupported-target", DocumentType.PART, "Part1")
+    dispatcher = OperationDispatcher(executor, target_resolver=lambda binding: document)
+
+    with pytest.raises(CapabilityUnavailableError):
+        dispatcher.dispatch(
+            {
+                "id": "unsupported-mutation",
+                "operation": "part.create_rectangular_extrude",
+                "params": {"width_mm": 100.0, "height_mm": 60.0, "depth_mm": 3.0},
+            }
+        )
+
+    with pytest.raises(TransactionError) as caught:
+        dispatcher.dispatch(
+            {
+                "id": "blocked-after-unsupported",
+                "operation": "part.rebuild",
+                "target": {"document_id": document.id},
+                "params": {},
+            }
+        )
+
+    assert caught.value.execution.rollback_status is RollbackStatus.STATE_UNCERTAIN
+    assert executor.calls == []
+
+    dispatcher.reconcile_mutation()
+    assert dispatcher.dispatch(
+        {
+            "id": "reconciled-after-unsupported",
+            "operation": "part.rebuild",
+            "target": {"document_id": document.id},
+            "params": {},
+        }
+    ).ok
+    assert executor.calls == ["rebuild"]
+
+
 def test_unsuccessful_rebuild_fails_and_rolls_back() -> None:
     executor = UnsuccessfulRebuildExecutor()
 
@@ -649,11 +688,28 @@ class FailingInspectionExecutor(FakeExecutor):
 
 class UnsupportedMutationExecutor:
     executor_kind = "unsupported"
-    created = False
+
+    def __init__(self) -> None:
+        self.created = False
+        self._mutation_state_uncertain = False
+        self.calls: list[str] = []
+
+    def mutation_state_uncertain(self) -> bool:
+        return self._mutation_state_uncertain
+
+    def mark_mutation_uncertain(self) -> None:
+        self._mutation_state_uncertain = True
+
+    def reconcile_mutation(self) -> None:
+        self._mutation_state_uncertain = False
 
     def create_part(self) -> DocumentHandle:
         self.created = True
         return DocumentHandle("unsupported-doc", DocumentType.PART, "Part1")
+
+    def rebuild(self, document: DocumentHandle) -> RebuildReport:
+        self.calls.append("rebuild")
+        return RebuildReport(True)
 
 
 class UnsuccessfulRebuildExecutor(FakeExecutor):

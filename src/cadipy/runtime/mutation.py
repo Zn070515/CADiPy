@@ -110,6 +110,7 @@ class MutationScope:
             self.commit()
 
     def step(self, label: str, action: MutationAction) -> Any:
+        self._require_entered("step")
         if self._finished or self.report.rollback_status is RollbackStatus.STATE_UNCERTAIN:
             raise TransactionError("mutation scope cannot accept another step")
         try:
@@ -133,6 +134,7 @@ class MutationScope:
             record(resource_id)
 
     def rebuild(self, action: MutationAction | None = None) -> Any:
+        self._require_entered("rebuild")
         if action is None:
             action = getattr(self.capability, "rebuild", None)
         if action is None:
@@ -153,6 +155,7 @@ class MutationScope:
             return result
 
     def verify(self, postconditions: Iterable[MutationAction]) -> None:
+        self._require_entered("verify")
         try:
             if not self._rebuild_succeeded:
                 raise TransactionError(  # noqa: TRY301
@@ -169,6 +172,7 @@ class MutationScope:
             raise
 
     def commit(self) -> ExecutionReport:
+        self._require_entered("commit")
         if self._finished:
             return self.report
         if self.report.phase is not ExecutionPhase.VERIFIED or not self._rebuild_succeeded:
@@ -187,6 +191,7 @@ class MutationScope:
         return self.report
 
     def rollback(self) -> ExecutionReport:
+        self._require_entered("rollback")
         if self._rollback_attempted:
             return self.report
         self._rollback_attempted = True
@@ -242,6 +247,12 @@ class MutationScope:
 
     def _mark_mutation_uncertain(self) -> None:
         self.capability.mark_mutation_uncertain()
+
+    def _require_entered(self, operation: str) -> None:
+        if not self._entered:
+            raise TransactionError(
+                f"mutation scope must be successfully entered before {operation}"
+            )
 
 
 def snapshot_for_document(

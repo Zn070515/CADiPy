@@ -237,3 +237,27 @@ def test_uncertain_rollback_blocks_a_later_scope_until_reconciled() -> None:
         third.step("safe after reconciliation", lambda: None)
         third.rebuild()
         third.verify((lambda: True,))
+
+
+def test_mutation_scope_rejects_all_lifecycle_actions_before_entry() -> None:
+    capability = FakeMutationCapability()
+    scope = MutationScope(capability, make_snapshot())
+    action_called = False
+
+    def action() -> None:
+        nonlocal action_called
+        action_called = True
+
+    with pytest.raises(TransactionError, match="successfully entered"):
+        scope.step("before entry", action)
+    with pytest.raises(TransactionError, match="successfully entered"):
+        scope.rebuild(action)
+    with pytest.raises(TransactionError, match="successfully entered"):
+        scope.verify((action,))
+    with pytest.raises(TransactionError, match="successfully entered"):
+        scope.commit()
+    with pytest.raises(TransactionError, match="successfully entered"):
+        scope.rollback()
+
+    assert action_called is False
+    assert capability.calls == []
