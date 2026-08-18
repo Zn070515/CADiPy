@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from cadipy.domain.execution import ExecutionReport
 
 
 class CadipyError(Exception):
@@ -20,7 +23,7 @@ class CadipyError(Exception):
         super().__init__(message)
         self.operation = operation
         self.details = details or {}
-        self.execution = None
+        self.execution: ExecutionReport | None = None
 
 
 class SessionClosedError(CadipyError):

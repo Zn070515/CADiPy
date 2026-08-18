@@ -26,7 +26,7 @@ from cadipy.domain.errors import (
     TargetNotFoundError,
     VerificationError,
 )
-from cadipy.domain.execution import ExecutionPhase
+from cadipy.domain.execution import ExecutionPhase, RollbackStatus
 from cadipy.domain.sketches import (
     DimensionHandle,
     DimensionInspection,
@@ -141,8 +141,9 @@ def test_required_verification_failure_raises_with_failed_execution_report() -> 
             }
         )
 
-    assert caught.value.execution.phase is ExecutionPhase.VERIFICATION_FAILED
-    assert caught.value.execution.state_certainty == "uncertain"
+    assert caught.value.execution.phase is ExecutionPhase.FAILED
+    assert caught.value.execution.state_certainty == "certain"
+    assert caught.value.execution.rollback_status is RollbackStatus.ROLLED_BACK
 
 
 def test_dimension_value_mismatch_fails_direct_dispatch_verification() -> None:

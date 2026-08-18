@@ -19,6 +19,7 @@ from cadipy.domain.errors import (
     VerificationError,
 )
 from cadipy.domain.execution import ExecutionPhase, ExecutionReport, RollbackStatus
+from cadipy.domain.identities import DocumentIdentity
 from cadipy.domain.sketches import (
     DimensionHandle,
     DimensionType,
@@ -28,6 +29,7 @@ from cadipy.domain.sketches import (
 )
 from cadipy.domain.targets import TargetBinding
 from cadipy.protocol.result import OperationResult
+from cadipy.runtime.mutation import MutationCapability, MutationScope, MutationSnapshot
 from cadipy.verification.postconditions import verify_rectangular_extrusion
 from cadipy.verification.registry import verify_postconditions
 
@@ -38,6 +40,32 @@ if TYPE_CHECKING:
     from cadipy.audit.recorder import AuditRecorder
 
 TargetResolver = Callable[[TargetBinding], DocumentHandle]
+
+
+class _NoopMutationCapability:
+    def begin_mutation(self, _snapshot: MutationSnapshot) -> None:
+        return None
+
+    def commit_mutation(self, _snapshot: MutationSnapshot) -> None:
+        return None
+
+    def rollback_mutation(self, _snapshot: MutationSnapshot) -> None:
+        return None
+
+    def verify_rollback(self, _snapshot: MutationSnapshot) -> bool:
+        return True
+
+
+def _mutation_capability(executor: SolidWorksExecutor) -> MutationCapability:
+    required = (
+        "begin_mutation",
+        "commit_mutation",
+        "rollback_mutation",
+        "verify_rollback",
+    )
+    return (
+        executor if all(hasattr(executor, name) for name in required) else _NoopMutationCapability()
+    )
 
 
 class OperationDispatcher:
@@ -101,8 +129,9 @@ class OperationDispatcher:
                 execution=report,
             )
         except Exception as exc:
-            failed = report
-            if report.phase not in {
+            scoped_report = getattr(exc, "execution", None)
+            failed = scoped_report if isinstance(scoped_report, ExecutionReport) else report
+            if scoped_report is None and report.phase not in {
                 ExecutionPhase.FAILED,
                 ExecutionPhase.VERIFICATION_FAILED,
                 ExecutionPhase.COMMITTED,
@@ -341,22 +370,44 @@ class OperationDispatcher:
             dimension = _dimension_from_value(params["dimension"], operation)
             return _dict(self.executor.inspect_dimension(target, sketch, dimension))
         if operation == "part.create_rectangular_extrude":
-            document = self.executor.create_part()
-            sketch = self.executor.create_sketch(document, params["plane"])
-            rectangle = self.executor.add_rectangle(
-                sketch,
-                params["width_mm"],
-                params["height_mm"],
+            snapshot = MutationSnapshot(
+                target_identity=DocumentIdentity(
+                    document_id="pending-created-part",
+                    path=None,
+                    title="CADiPy-created Part",
+                    document_type=DocumentType.PART,
+                ),
+                created_resource=True,
             )
-            feature = self.executor.extrude(document, sketch, params["depth_mm"])
-            rebuild = self.executor.rebuild(document)
-            inspection = self.executor.inspect_document(document)
-            verification = verify_rectangular_extrusion(
-                inspection,
-                params["width_mm"],
-                params["height_mm"],
-                params["depth_mm"],
-            )
+            capability = _mutation_capability(self.executor)
+            with MutationScope(capability, snapshot) as scope:
+                document = scope.step("create part", self.executor.create_part)
+                scope.mark_created_resource(document.id)
+                sketch = scope.step(
+                    "create sketch",
+                    lambda: self.executor.create_sketch(document, params["plane"]),
+                )
+                rectangle = scope.step(
+                    "create rectangle",
+                    lambda: self.executor.add_rectangle(
+                        sketch,
+                        params["width_mm"],
+                        params["height_mm"],
+                    ),
+                )
+                feature = scope.step(
+                    "create extrusion",
+                    lambda: self.executor.extrude(document, sketch, params["depth_mm"]),
+                )
+                rebuild = scope.rebuild(lambda: self.executor.rebuild(document))
+                inspection = self.executor.inspect_document(document)
+                verification = verify_rectangular_extrusion(
+                    inspection,
+                    params["width_mm"],
+                    params["height_mm"],
+                    params["depth_mm"],
+                )
+                scope.verify((lambda: verification.passed,))
             data: dict[str, Any] = {
                 "document": _handle_dict(document),
                 "sketch": _handle_dict(sketch),

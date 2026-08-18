@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from cadipy.runtime.mutation import MutationSnapshot
+
 from cadipy.backends.executor import (
     ApplicationInfo,
     DocumentHandle,
@@ -238,6 +240,21 @@ class FakeWorkerExecutor:
 
     def rebuild(self, document: DocumentHandle) -> RebuildReport:
         return RebuildReport(success=True)
+
+    def begin_mutation(self, snapshot: MutationSnapshot) -> None:
+        return None
+
+    def commit_mutation(self, snapshot: MutationSnapshot) -> None:
+        return None
+
+    def rollback_mutation(self, snapshot: MutationSnapshot) -> None:
+        return None
+
+    def verify_rollback(self, snapshot: MutationSnapshot) -> bool:
+        return True
+
+    def record_created_resource(self, resource_id: str) -> None:
+        return None
 
     def save(self, document: DocumentHandle, path: Path) -> SaveReport:
         return SaveReport(success=True, path=path)

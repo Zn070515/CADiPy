@@ -62,7 +62,8 @@ def test_required_verification_failure_is_not_serialized_as_success() -> None:
 
     assert result["ok"] is False
     assert result["error"]["code"] == "verification_failed"
-    assert result["execution"]["phase"] == "verification_failed"
+    assert result["execution"]["phase"] == "failed"
+    assert result["execution"]["rollback_status"] == "rolled_back"
 
 
 def test_dimension_mismatch_is_serialized_as_verification_failure() -> None:

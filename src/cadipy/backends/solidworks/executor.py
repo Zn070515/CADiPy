@@ -34,6 +34,7 @@ from cadipy.domain.sketches import (
     SketchInspection,
 )
 from cadipy.domain.units import mm_to_sw_m, sw_m_to_mm
+from cadipy.runtime.mutation import MutationSnapshot
 
 from . import application, documents, geometry
 from .apartment import ComApartment
@@ -89,6 +90,8 @@ class PythonComSolidWorksExecutor:
         self._rebuild_documents: dict[str, bool] = {}
         self._connection_mode = "attach"
         self._owns_application = False
+        self._mutation_snapshot: MutationSnapshot | None = None
+        self._undo_recording = False
 
     def __enter__(self) -> Any:
         self.connect()
@@ -195,6 +198,61 @@ class PythonComSolidWorksExecutor:
                 operation="solidworks.executor",
             )
         return self._application
+
+    def begin_mutation(self, snapshot: MutationSnapshot) -> None:
+        self._mutation_snapshot = snapshot
+        self._undo_recording = False
+        model = self._documents.get(snapshot.target_identity.document_id)
+        if model is None:
+            return
+        start = getattr(getattr(model, "Extension", None), "StartRecordingUndoObject", None)
+        if callable(start):
+            start()
+            self._undo_recording = True
+
+    def record_created_resource(self, resource_id: str) -> None:
+        if self._mutation_snapshot is not None:
+            self._mutation_snapshot = MutationSnapshot(
+                target_identity=self._mutation_snapshot.target_identity,
+                dirty=self._mutation_snapshot.dirty,
+                save_observation=self._mutation_snapshot.save_observation,
+                model_fingerprint=self._mutation_snapshot.model_fingerprint,
+                created_resource=True,
+                created_resource_id=resource_id,
+            )
+
+    def commit_mutation(self, snapshot: MutationSnapshot) -> None:
+        model = self._documents.get(snapshot.target_identity.document_id)
+        finish = getattr(getattr(model, "Extension", None), "FinishRecordingUndoObject2", None)
+        if self._undo_recording and callable(finish):
+            finish("CADiPy mutation", False)
+        self._mutation_snapshot = None
+        self._undo_recording = False
+
+    def rollback_mutation(self, snapshot: MutationSnapshot) -> None:
+        if snapshot.created_resource and snapshot.created_resource_id:
+            document = self._documents.get(snapshot.created_resource_id)
+            if document is not None:
+                self.close(self._document_handles[snapshot.created_resource_id])
+        elif self._undo_recording:
+            model = self._documents.get(snapshot.target_identity.document_id)
+            undo = getattr(model, "EditUndo2", None)
+            if callable(undo):
+                undo()
+
+    def verify_rollback(self, snapshot: MutationSnapshot) -> bool:
+        if snapshot.created_resource and snapshot.created_resource_id:
+            return snapshot.created_resource_id not in self._documents
+        if snapshot.model_fingerprint is None:
+            return self._undo_recording
+        document = self._documents.get(snapshot.target_identity.document_id)
+        if document is None:
+            return False
+        return self._document_fingerprint(document) == snapshot.model_fingerprint
+
+    def _document_fingerprint(self, document: DocumentHandle) -> str:
+        inspection = self.inspect_document(document)
+        return repr(inspection)
 
     def _document_object(self, handle: DocumentHandle) -> Any:
         try:
