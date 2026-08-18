@@ -21,24 +21,27 @@ result = execute(
 
 ```python
 from cadipy import launch
+from cadipy.domain.errors import CadipyError
 
 with launch(visible=False) as cad:
-    result = cad.execute(
-        "part.create_rectangular_extrude",
-        params={
-            "plane": "Front Plane",
-            "width_mm": 100.0,
-            "height_mm": 60.0,
-            "depth_mm": 3.0,
-        },
-    )
-    if not result.ok:
-        raise RuntimeError(result.error)
+    try:
+        result = cad.execute(
+            "part.create_rectangular_extrude",
+            params={
+                "plane": "Front Plane",
+                "width_mm": 100.0,
+                "height_mm": 60.0,
+                "depth_mm": 3.0,
+            },
+        )
+    except CadipyError as exc:
+        raise RuntimeError(str(exc)) from exc
+    assert result.ok
 ```
 
 结果中的 `execution` 报告记录生命周期：成功通常依次经过 `received`、`validated`、`target_resolved`、`executed`、适用时的 `rebuilt`、`verified`，最后为 `committed`。成功的 `OperationResult` 有 `ok=true`，并可报告 `state_certainty` 和 `rollback_status`。必需 postcondition 失败的错误码固定为 `verification_failed`；旧式的 `ok=true` 加 `verification="failed"` 不代表成功。直接调用 `CadipySession.execute()` 或 dispatcher 时，typed `CadipyError` 会抛给 Python 调用方；RPC/MCP adapter 才会把它们序列化为 `ok=false` envelope。mutation scope 内的验证失败可能在回滚后以 `failed` 阶段返回，但仍绝不能是成功结果。
 
-普通 command exception（包括 command 内抛出的后端/COM 异常）会交付给当前 Python 调用方，host 本身继续运行，后续 command 仍可提交；它不同于 worker 或进程级失败。超时只停止等待，不取消正在执行的 Python 或 COM 调用。运行中的调用可能已经修改模型，因此 timeout 会令 host 进入失败状态，排队中的调用会被拒绝；超时或结果不明确后，必须先结束 session 并重新连接，再进行 mutation。CADiPy 不会自动重试不确定的 mutation，也不承诺自动恢复 SOLIDWORKS 进程崩溃。
+普通 command exception（包括 command 内抛出的后端/COM 异常）会交付给当前 Python 调用方，host 本身继续运行，后续 command 仍可提交；它不同于 worker 或进程级失败。超时时，调用方收到并重新抛出内置 `TimeoutError`；host 同时进入 `failed` 状态，排队中的调用被拒绝，之后的新提交会得到 `WorkerError`。超时不会取消正在执行的 Python 或 COM 调用，运行中的调用可能已经修改模型；超时或结果不明确后，必须先结束 session 并重新连接，再进行 mutation。CADiPy 不会自动重试不确定的 mutation，也不承诺自动恢复 SOLIDWORKS 进程崩溃。
 
 mutation scope 只做有边界的一次回滚尝试。`rollback_status` 的值为 `not_attempted`、`rolled_back`、`rollback_failed` 或 `state_uncertain`。只有回滚观察得到验证时才报告 `rolled_back`；回滚失败或无法证明状态时，后续 mutation 必须等 session 清理并重新连接。该机制不是 ACID 事务、不是 crash-safe 事务，也不提供 exactly-once 保证。
 

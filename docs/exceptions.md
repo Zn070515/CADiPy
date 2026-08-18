@@ -7,7 +7,7 @@
 ## 执行与 mutation 错误
 
 - `verification_failed`：必需 postcondition 未通过。直接 Python `CadipySession`/dispatcher 调用保留 typed `VerificationError`；RPC/MCP 返回 `ok=false` envelope。当前 CLI 的成功路径打印 `OperationResult.to_dict()` 并按 `result.ok` 返回 0/1，但 operation exception 会从 `main()` 逸出为进程级错误，而不是统一 JSON 失败响应；只有 malformed `--params-json` 会打印最小 `ok=false` JSON 并返回 2。它永远不能把该失败作为 `ok=true` 返回。
-- `worker`：STA host 启动、worker loop、断开或超时失败。普通 command exception（包括 command 内的 backend/COM 异常）会交付给调用方，host 继续运行；timeout 不取消正在运行的 COM 调用，调用可能仍在执行或已经改变模型。
+- `worker`：STA host 启动、worker loop 或断开失败。普通 command exception（包括 command 内的 backend/COM 异常）会交付给调用方，host 继续运行；timeout 的调用方收到并重新抛出内置 `TimeoutError`，host 进入 `failed`，后续提交才会得到 `WorkerError`。超时不取消正在运行的 COM 调用，调用可能仍在执行或已经改变模型。
 - `transaction`：mutation 被不确定状态阻塞，或一次有边界的回滚未能证明恢复。
 - `execution.phase`：`received`、`validated`、`target_resolved`、`executed`、`rebuilt`、`verified`、`committed`、`verification_failed` 或 `failed`。
 - `execution.rollback_status`：`not_attempted`、`rolled_back`、`rollback_failed` 或 `state_uncertain`。`state_uncertain` 或无法验证的回滚要求关闭 session 并重新连接；在此之前不允许继续 mutation，也不自动重试。

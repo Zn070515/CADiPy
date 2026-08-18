@@ -35,7 +35,7 @@
 
 这里的 `ok=false` 是 protocol adapter 的 envelope 语义：`ProtocolServer.handle()` 捕获 dispatcher/session 抛出的 typed `CadipyError`，RPC 和 MCP 因而返回结构化失败响应。直接 Python 调用 `CadipySession.execute()` 或 dispatcher 时，错误会以 typed exception 传播，不会自动转换为 `OperationResult`；当前 CLI 也不把这些 operation exception 包装成统一的 JSON 失败 envelope。
 
-`rollback_status` 只有 `not_attempted`、`rolled_back`、`rollback_failed`、`state_uncertain`。普通 command exception 会交付给调用方，host 继续处理后续 command；worker loop、startup、cleanup 失败或 timeout 才会使 host 进入 failed 状态并拒绝后续排队请求。超时不会取消已经运行的 COM 调用；它可能已经改变模型。调用方必须清理 session 并重新连接，才能再次 mutation；不允许自动重试不确定的 mutation。该协议不承诺 ACID、crash-safe 或 exactly-once 语义。
+`rollback_status` 只有 `not_attempted`、`rolled_back`、`rollback_failed`、`state_uncertain`。普通 command exception 会交付给调用方，host 继续处理后续 command；worker loop、startup、cleanup 失败会使 host 进入 failed 状态并拒绝后续排队请求。直接 Python host/session 调用在 timeout 时收到并重新抛出内置 `TimeoutError`；host 同时进入 failed，之后的新提交会得到 `WorkerError`。若 timeout 穿过 `ProtocolServer.handle()`，adapter 会捕获该异常并返回序列化失败 envelope。超时不会取消已经运行的 COM 调用；它可能已经改变模型。调用方必须清理 session 并重新连接，才能再次 mutation；不允许自动重试不确定的 mutation。该协议不承诺 ACID、crash-safe 或 exactly-once 语义。
 
 持久 session 的 adapter 仍消费同一个 `OPERATION_REGISTRY` 和同一个 session façade；Dispatcher 继续由 host 独占。当前阶段新增：
 

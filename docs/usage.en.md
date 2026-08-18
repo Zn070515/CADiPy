@@ -21,24 +21,27 @@ The current 100×60×3 mm contract is:
 
 ```python
 from cadipy import launch
+from cadipy.domain.errors import CadipyError
 
 with launch(visible=False) as cad:
-    result = cad.execute(
-        "part.create_rectangular_extrude",
-        params={
-            "plane": "Front Plane",
-            "width_mm": 100.0,
-            "height_mm": 60.0,
-            "depth_mm": 3.0,
-        },
-    )
-    if not result.ok:
-        raise RuntimeError(result.error)
+    try:
+        result = cad.execute(
+            "part.create_rectangular_extrude",
+            params={
+                "plane": "Front Plane",
+                "width_mm": 100.0,
+                "height_mm": 60.0,
+                "depth_mm": 3.0,
+            },
+        )
+    except CadipyError as exc:
+        raise RuntimeError(str(exc)) from exc
+    assert result.ok
 ```
 
 The `execution` report records the lifecycle. A successful operation normally passes through `received`, `validated`, `target_resolved`, `executed`, `rebuilt` when applicable, `verified`, and finally `committed`. A successful `OperationResult` has `ok=true` and may report `state_certainty` and `rollback_status`. A required postcondition failure always uses the stable `verification_failed` error code; the old shape of `ok=true` with `verification="failed"` is not success. Direct `CadipySession.execute()` and dispatcher callers receive typed `CadipyError` exceptions; RPC and MCP adapters serialize those failures as `ok=false` envelopes. A verification failure inside a mutation scope may have the terminal `failed` phase after rollback, but it can never be a successful result.
 
-An ordinary command exception, including a backend or COM exception raised by the command, is delivered to the Python caller while the host continues and can accept later commands. That differs from a worker or process-level failure. A timeout only stops waiting; it does not cancel a running Python or COM call. The running call may already have changed the model, so a timeout puts the host into a failed state and queued calls are rejected. After a timeout or ambiguous result, close the session and reconnect before any further mutation. CADiPy never automatically retries an uncertain mutation and does not promise automatic recovery from a SOLIDWORKS process crash.
+An ordinary command exception, including a backend or COM exception raised by the command, is delivered to the Python caller while the host continues and can accept later commands. That differs from a worker or process-level failure. On timeout, the caller receives and re-raises the built-in `TimeoutError`; the host simultaneously enters `failed`, queued calls are rejected, and later submissions receive `WorkerError`. A timeout does not cancel a running Python or COM call; the running call may already have changed the model. After a timeout or ambiguous result, close the session and reconnect before any further mutation. CADiPy never automatically retries an uncertain mutation and does not promise automatic recovery from a SOLIDWORKS process crash.
 
 Mutation scopes make one bounded rollback attempt. `rollback_status` is one of `not_attempted`, `rolled_back`, `rollback_failed`, or `state_uncertain`. `rolled_back` is reported only when rollback is observably verified; a failed or unverifiable rollback requires session cleanup and reconnection before another mutation. This is not an ACID or crash-safe transaction and provides no exactly-once guarantee.
 
