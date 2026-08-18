@@ -13,6 +13,37 @@ result = execute(
 
 Results distinguish API calls, rebuild, verification, and save/reopen evidence. Use `cadipy check`, `cadipy server status`, or `cadipy operation <name> --params-json '<json>'` from the CLI.
 
+## Execution safety contract
+
+Each `CadipySession` owns one dedicated STA execution thread. The executor, dispatcher, target registry, connection/disconnection lifecycle, and Python COM calls run on that thread. Public APIs return serializable domain values only; live COM objects never cross the boundary. `execute()` is a synchronous façade: the caller waits for the result, and concurrent callers are serialized through the session queue instead of entering SOLIDWORKS concurrently.
+
+The current 100×60×3 mm contract is:
+
+```python
+from cadipy import launch
+
+with launch(visible=False) as cad:
+    result = cad.execute(
+        "part.create_rectangular_extrude",
+        params={
+            "plane": "Front Plane",
+            "width_mm": 100.0,
+            "height_mm": 60.0,
+            "depth_mm": 3.0,
+        },
+    )
+    if not result.ok:
+        raise RuntimeError(result.error)
+```
+
+The `execution` report records the lifecycle. A successful operation normally passes through `received`, `validated`, `target_resolved`, `executed`, `rebuilt` when applicable, `verified`, and finally `committed`. A failure has `ok=false` and may report the `verification_failed` or `failed` phase together with `state_certainty` and `rollback_status`. A required postcondition failure always uses the stable `verification_failed` error code; the old shape of `ok=true` with `verification="failed"` is not success. A verification failure inside a mutation scope may have the terminal `failed` phase after rollback, but it can never be a successful result.
+
+A timeout only stops waiting; it does not cancel a running Python or COM call. The running call may already have changed the model, so the host enters a failed state and queued calls are rejected. After a timeout or ambiguous result, close the session and reconnect before any further mutation. CADiPy never automatically retries an uncertain mutation.
+
+Mutation scopes make one bounded rollback attempt. `rollback_status` is one of `not_attempted`, `rolled_back`, `rollback_failed`, or `state_uncertain`. `rolled_back` is reported only when rollback is observably verified; a failed or unverifiable rollback requires session cleanup and reconnection before another mutation. This is not an ACID or crash-safe transaction and provides no exactly-once guarantee.
+
+`connect()` attaches to an existing SOLIDWORKS instance; session shutdown releases CADiPy references but does not terminate that instance. `launch()` creates an instance owned by CADiPy, which may be closed at disconnect. Rollback cleanup likewise closes only documents or resources created and owned by CADiPy.
+
 Use a persistent session when several operations belong to one SOLIDWORKS workflow. `connect()` strictly attaches to an already-running instance and preserves its current window visibility by default; use explicit `launch()` when CADiPy should create and own a new instance. `launch()` shows the new window by default, while automation can request `launch(visible=False)`. Session-local `document_id` values expire at session exit. Rebind a saved document in a later session by path, title, document type, or configuration.
 
 ```python

@@ -30,3 +30,13 @@ runner 应使用独立目录和交互式桌面 session，例如 `C:\actions-runn
 workflow 开始时会拒绝已有的 `SLDWORKS.exe`，因为 CADiPy 不应附着到或终止用户-owned 实例。preflight 使用 `launch(visible=False)` 创建并拥有隐藏实例，读取 revision 和 visibility 后关闭它；集成 fixture 也只关闭 CADiPy 创建的文档和实例。
 
 workflow 结束时只检查是否有 `SLDWORKS.exe` 残留，不执行进程级强杀。若残留，job 失败并保留证据供诊断。当前没有删除 pywin32 `gen_py` cache 的步骤；只有真实运行证明需要时才引入有边界的自愈逻辑。
+
+## 执行安全与测试证据
+
+session 的 strict 测试通过公开 session façade 运行；fixture 只断言可序列化结果和语义证据，并验证 executor 创建、连接、操作和断开都在同一个 STA host 线程上。100×60×3 mm 的矩形拉伸 round-trip 会创建模型、rebuild、inspect、保存、关闭、重开并再次验证。必需 verification 失败必须返回 `ok=false` 和 `verification_failed`；附着 user-owned 实例的测试在 preflight 之后创建实例，并确认 CADiPy 断开后实例仍可用。
+
+普通 portable 测试使用 fake executor 验证 FIFO、线程隔离、超时、结果序列化和 rollback state machine。这些 fake 测试证明 CADiPy 自己的边界逻辑，不证明 SOLIDWORKS COM 兼容性；只有 strict real-SOLIDWORKS gate 提供真机证据。
+
+strict 模式由 `CADIPY_REQUIRE_REAL_SOLIDWORKS=1`（或 `--real-solidworks`）启用。缺少 Windows、Python 3.12、SOLIDWORKS、COM、Revision `34.3.2`，或 fixture/清理失败时必须 FAIL，不能静默 skip。受支持 runner 是 Windows 11 x64、labels `self-hosted`, `windows`, `x64`, `solidworks`，并使用单个串行 job；fork PR 不得在该 runner 执行。
+
+preflight 会拒绝 job 开始前已经存在的 `SLDWORKS.exe`。CADiPy 不会终止 pre-existing 或 user-owned SOLIDWORKS；只会清理本次 job 明确创建并拥有的实例和文档。timeout、COM 崩溃或不确定 rollback 的证据要求清理 session 并重新连接，不能用自动重试冒充成功。该执行 runtime 没有 ACID 或 exactly-once 保证。
