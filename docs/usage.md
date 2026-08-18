@@ -36,13 +36,13 @@ with launch(visible=False) as cad:
         raise RuntimeError(result.error)
 ```
 
-结果中的 `execution` 报告记录生命周期：成功通常依次经过 `received`、`validated`、`target_resolved`、`executed`、适用时的 `rebuilt`、`verified`，最后为 `committed`。失败结果必须是 `ok=false`，并可报告 `verification_failed` 或 `failed` 阶段、`state_certainty` 和 `rollback_status`。必需 postcondition 失败的错误码固定为 `verification_failed`；旧式的 `ok=true` 加 `verification="failed"` 不代表成功。mutation scope 内的验证失败可能在回滚后以 `failed` 阶段返回，但仍绝不能是成功结果。
+结果中的 `execution` 报告记录生命周期：成功通常依次经过 `received`、`validated`、`target_resolved`、`executed`、适用时的 `rebuilt`、`verified`，最后为 `committed`。成功的 `OperationResult` 有 `ok=true`，并可报告 `state_certainty` 和 `rollback_status`。必需 postcondition 失败的错误码固定为 `verification_failed`；旧式的 `ok=true` 加 `verification="failed"` 不代表成功。直接调用 `CadipySession.execute()` 或 dispatcher 时，typed `CadipyError` 会抛给 Python 调用方；RPC/MCP adapter 才会把它们序列化为 `ok=false` envelope。mutation scope 内的验证失败可能在回滚后以 `failed` 阶段返回，但仍绝不能是成功结果。
 
-超时只停止等待，不取消正在执行的 Python 或 COM 调用。运行中的调用可能已经修改模型，因此 host 会进入失败状态，排队中的调用会被拒绝；超时或结果不明确后，必须先结束 session 并重新连接，再进行 mutation。CADiPy 不会自动重试不确定的 mutation。
+普通 command exception（包括 command 内抛出的后端/COM 异常）会交付给当前 Python 调用方，host 本身继续运行，后续 command 仍可提交；它不同于 worker 或进程级失败。超时只停止等待，不取消正在执行的 Python 或 COM 调用。运行中的调用可能已经修改模型，因此 timeout 会令 host 进入失败状态，排队中的调用会被拒绝；超时或结果不明确后，必须先结束 session 并重新连接，再进行 mutation。CADiPy 不会自动重试不确定的 mutation，也不承诺自动恢复 SOLIDWORKS 进程崩溃。
 
 mutation scope 只做有边界的一次回滚尝试。`rollback_status` 的值为 `not_attempted`、`rolled_back`、`rollback_failed` 或 `state_uncertain`。只有回滚观察得到验证时才报告 `rolled_back`；回滚失败或无法证明状态时，后续 mutation 必须等 session 清理并重新连接。该机制不是 ACID 事务、不是 crash-safe 事务，也不提供 exactly-once 保证。
 
-`connect()` 附着到已有的 SOLIDWORKS 实例，session 结束时只释放 CADiPy 的引用，不终止该实例。`launch()` 创建并拥有的新实例可以由 CADiPy 在断开时关闭；回滚时也只清理 CADiPy 创建且明确归其所有的文档或资源。
+`connect()` 以 attach 模式开始，`launch()` 以 launch 模式创建新的 session。安全生命周期要求两种模式分开：不要在已经 attach 的 session 中调用 `application.launch`。当前 backend 会保留已附着的 application 引用，却把连接模式和 ownership 标记改成 launch-owned；随后断开可能对原先附着的实例调用 `ExitApp`。实现当前不会拒绝这个 transition；需要 launch 时，应先结束 attach session，再创建新的 `launch()` session。回滚只清理 CADiPy 创建且明确归其所有的文档或资源。
 
 持续操作同一个 SOLIDWORKS 工程时使用持久 session。`connect()` 严格 attach 到已运行实例，默认保持其当前窗口可见性；需要 CADiPy 创建并拥有新实例时显式使用 `launch()`，默认显示窗口。自动化场景可使用 `launch(visible=False)`。session 结束后其中的 `document_id` 失效，已保存文档应使用路径、标题、类型或 configuration 重新绑定。
 

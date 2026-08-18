@@ -6,12 +6,12 @@
 
 ## 执行与 mutation 错误
 
-- `verification_failed`：必需 postcondition 未通过。Python façade 保留 typed `VerificationError`；RPC、MCP 和 CLI 返回 `ok=false`。它永远不能作为 `ok=true` 返回。
-- `worker`：STA host 启动、worker、断开或超时失败。超时不取消正在运行的 COM 调用；调用可能仍在执行或已经改变模型。
+- `verification_failed`：必需 postcondition 未通过。直接 Python `CadipySession`/dispatcher 调用保留 typed `VerificationError`；RPC/MCP 返回 `ok=false` envelope。当前 CLI 的成功路径打印 `OperationResult.to_dict()` 并按 `result.ok` 返回 0/1，但 operation exception 会从 `main()` 逸出为进程级错误，而不是统一 JSON 失败响应；只有 malformed `--params-json` 会打印最小 `ok=false` JSON 并返回 2。它永远不能把该失败作为 `ok=true` 返回。
+- `worker`：STA host 启动、worker loop、断开或超时失败。普通 command exception（包括 command 内的 backend/COM 异常）会交付给调用方，host 继续运行；timeout 不取消正在运行的 COM 调用，调用可能仍在执行或已经改变模型。
 - `transaction`：mutation 被不确定状态阻塞，或一次有边界的回滚未能证明恢复。
 - `execution.phase`：`received`、`validated`、`target_resolved`、`executed`、`rebuilt`、`verified`、`committed`、`verification_failed` 或 `failed`。
 - `execution.rollback_status`：`not_attempted`、`rolled_back`、`rollback_failed` 或 `state_uncertain`。`state_uncertain` 或无法验证的回滚要求关闭 session 并重新连接；在此之前不允许继续 mutation，也不自动重试。
 
-错误结果还可包含 `state_certainty`。不要把“调用返回”解释为“模型已正确提交”：成功必须有 `ok=true` 和 `phase=committed`，而必需验证失败必须是失败结果。该 runtime 只提供 bounded rollback，不提供 ACID、crash-safe 或 exactly-once 语义。
+错误结果还可包含 `state_certainty`。不要把“调用返回”解释为“模型已正确提交”：成功必须有 `ok=true` 和 `phase=committed`，而必需验证失败在 protocol envelope 中必须是失败结果。该 runtime 只提供 bounded rollback，不提供 ACID、crash-safe 或 exactly-once 语义；它也不承诺自动恢复 SOLIDWORKS 进程崩溃。
 
-连接生命周期也属于错误处理的一部分：`connect()` 附着的已有 SOLIDWORKS 实例不是 CADiPy 所有，session 清理不会终止它；`launch()` 创建且拥有的实例才可由 CADiPy 关闭。回滚只清理明确由 CADiPy 创建并拥有的资源。
+连接生命周期也属于错误处理的一部分：`connect()` 以 attach 模式开始，`launch()` 以 launch 模式开始新的 session。不要在已 attach 的 session 中调用 `application.launch`：当前 backend 会保留原 application 引用却改写 ownership 标记，之后 disconnect 可能终止原先附着的实例；实现当前不会拒绝这个 transition。需要 launch 时先结束 attach session，再创建新的 `launch()` session。回滚只清理明确由 CADiPy 创建并拥有的资源。
