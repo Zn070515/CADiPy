@@ -26,6 +26,7 @@ from cadipy.domain.errors import (
     ProtocolError,
     RebuildError,
     TargetNotFoundError,
+    TransactionError,
     VerificationError,
 )
 from cadipy.domain.execution import ExecutionPhase, RollbackStatus
@@ -41,6 +42,7 @@ from cadipy.domain.sketches import (
     SketchInspection,
 )
 from cadipy.operations.dispatch import OperationDispatcher
+from cadipy.runtime.mutation import MutationScope, snapshot_for_document
 
 
 class FakeExecutor:
@@ -49,6 +51,17 @@ class FakeExecutor:
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.mutation_calls: list[str] = []
+        self._mutation_state_uncertain = False
+        self.rollback_verified = True
+
+    def mutation_state_uncertain(self) -> bool:
+        return self._mutation_state_uncertain
+
+    def mark_mutation_uncertain(self) -> None:
+        self._mutation_state_uncertain = True
+
+    def reconcile_mutation(self) -> None:
+        self._mutation_state_uncertain = False
 
     def begin_mutation(self, snapshot: object) -> None:
         self.mutation_calls.append("begin")
@@ -61,7 +74,7 @@ class FakeExecutor:
 
     def verify_rollback(self, snapshot: object) -> bool:
         self.mutation_calls.append("verify_rollback")
-        return True
+        return self.rollback_verified
 
     def record_created_resource(self, resource_id: str) -> None:
         self.mutation_calls.append(f"created:{resource_id}")
@@ -201,6 +214,43 @@ def test_unsuccessful_rebuild_fails_and_rolls_back() -> None:
 
     assert caught.value.execution.rollback_status is RollbackStatus.ROLLED_BACK
     assert "commit" not in executor.mutation_calls
+
+
+def test_dispatcher_blocks_later_mutation_after_uncertain_rollback_state() -> None:
+    executor = FakeExecutor()
+    document = DocumentHandle("doc-a", DocumentType.PART, "PartA")
+    executor.rollback_verified = False
+    scope = MutationScope(executor, snapshot_for_document(document))
+    with pytest.raises(TransactionError), scope:
+        scope.step("forced failure", lambda: (_ for _ in ()).throw(ValueError("forced")))
+
+    dispatcher = OperationDispatcher(executor, target_resolver=lambda binding: document)
+
+    with pytest.raises(TransactionError) as caught:
+        dispatcher.dispatch(
+            {
+                "id": "blocked-mutation",
+                "operation": "part.rebuild",
+                "target": {"document_id": document.id},
+                "params": {},
+            }
+        )
+
+    assert caught.value.execution.phase is ExecutionPhase.FAILED
+    assert caught.value.execution.state_certainty == "uncertain"
+    assert caught.value.execution.rollback_status is RollbackStatus.STATE_UNCERTAIN
+    assert executor.calls == []
+
+    dispatcher.reconcile_mutation()
+    assert dispatcher.dispatch(
+        {
+            "id": "reconciled-mutation",
+            "operation": "part.rebuild",
+            "target": {"document_id": document.id},
+            "params": {},
+        }
+    ).ok
+    assert executor.calls == ["rebuild"]
 
 
 def test_dimension_value_mismatch_fails_direct_dispatch_verification() -> None:

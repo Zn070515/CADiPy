@@ -38,6 +38,16 @@ class FakeMutationCapability:
     def __post_init__(self) -> None:
         self.calls: list[str] = []
         self.raw_rollback_error: RuntimeError | None = None
+        self.state_uncertain = False
+
+    def mutation_state_uncertain(self) -> bool:
+        return self.state_uncertain
+
+    def mark_mutation_uncertain(self) -> None:
+        self.state_uncertain = True
+
+    def reconcile_mutation(self) -> None:
+        self.state_uncertain = False
 
     def begin_mutation(self, snapshot: MutationSnapshot) -> None:
         if self.fail_begin:
@@ -204,3 +214,26 @@ def test_unsuccessful_rebuild_rolls_back_before_verification_or_commit() -> None
     assert caught.value.execution is scope.report
     assert scope.report.rollback_status is RollbackStatus.ROLLED_BACK
     assert capability.calls == ["begin", "rollback", "verify_rollback"]
+
+
+def test_uncertain_rollback_blocks_a_later_scope_until_reconciled() -> None:
+    capability = FakeMutationCapability(rollback_verified=False)
+    first = MutationScope(capability, make_snapshot())
+
+    with pytest.raises(TransactionError), first:
+        first.step("forced failure", lambda: (_ for _ in ()).throw(ValueError("forced")))
+
+    second = MutationScope(capability, make_snapshot())
+    with pytest.raises(TransactionError) as caught:
+        second.__enter__()
+
+    assert caught.value.execution is second.report
+    assert second.report.rollback_status is RollbackStatus.STATE_UNCERTAIN
+    assert capability.calls == ["begin", "rollback", "verify_rollback"]
+
+    capability.reconcile_mutation()
+    third = MutationScope(capability, make_snapshot())
+    with third:
+        third.step("safe after reconciliation", lambda: None)
+        third.rebuild()
+        third.verify((lambda: True,))

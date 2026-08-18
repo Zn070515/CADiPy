@@ -95,6 +95,7 @@ class PythonComSolidWorksExecutor:
         self._mutation_snapshot: MutationSnapshot | None = None
         self._undo_recording = False
         self._undo_attempted = False
+        self._mutation_state_is_uncertain = False
 
     def __enter__(self) -> Any:
         self.connect()
@@ -186,6 +187,10 @@ class PythonComSolidWorksExecutor:
         self._created_document_ids.clear()
         self._created_documents.clear()
         self._rebuild_documents.clear()
+        self._mutation_snapshot = None
+        self._undo_recording = False
+        self._undo_attempted = False
+        self._mutation_state_is_uncertain = False
         self._application = None
         self._owns_application = False
         if owned and app is not None:
@@ -224,6 +229,15 @@ class PythonComSolidWorksExecutor:
             )
         start()
         self._undo_recording = True
+
+    def mutation_state_uncertain(self) -> bool:
+        return self._mutation_state_is_uncertain
+
+    def mark_mutation_uncertain(self) -> None:
+        self._mutation_state_is_uncertain = True
+
+    def reconcile_mutation(self) -> None:
+        self._mutation_state_is_uncertain = False
 
     def record_created_resource(self, resource_id: str) -> None:
         if self._mutation_snapshot is None:

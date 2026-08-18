@@ -244,6 +244,15 @@ class FakeWorkerExecutor:
     def begin_mutation(self, snapshot: MutationSnapshot) -> None:
         return None
 
+    def mutation_state_uncertain(self) -> bool:
+        return False
+
+    def mark_mutation_uncertain(self) -> None:
+        return None
+
+    def reconcile_mutation(self) -> None:
+        return None
+
     def commit_mutation(self, snapshot: MutationSnapshot) -> None:
         return None
 

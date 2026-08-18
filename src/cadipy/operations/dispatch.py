@@ -17,6 +17,7 @@ from cadipy.domain.errors import (
     InvalidArgumentError,
     ProtocolError,
     TargetNotFoundError,
+    TransactionError,
     VerificationError,
 )
 from cadipy.domain.execution import ExecutionPhase, ExecutionReport, RollbackStatus
@@ -45,6 +46,9 @@ TargetResolver = Callable[[TargetBinding], DocumentHandle]
 
 def _mutation_capability(executor: SolidWorksExecutor) -> MutationCapability | None:
     required = (
+        "mutation_state_uncertain",
+        "mark_mutation_uncertain",
+        "reconcile_mutation",
         "begin_mutation",
         "commit_mutation",
         "rollback_mutation",
@@ -82,6 +86,8 @@ class OperationDispatcher:
                 )
             normalized = self._validate_params(spec, params)
             report = report.transition(ExecutionPhase.VALIDATED)
+            if spec.mutating:
+                self._ensure_mutation_state(operation, report)
             target = self._resolve_target(spec, request.get("target"))
             report = report.transition(ExecutionPhase.TARGET_RESOLVED)
             data = self._invoke(operation, normalized, target)
@@ -129,6 +135,46 @@ class OperationDispatcher:
                 failed = report.transition(failure_phase, state_certainty="uncertain")
             setattr(exc, "execution", failed)  # noqa: B010
             raise
+
+    def reconcile_mutation(self) -> None:
+        """Explicitly clear a previously persisted uncertain mutation state."""
+        reconcile = getattr(self.executor, "reconcile_mutation", None)
+        if not callable(reconcile):
+            raise CapabilityUnavailableError(
+                "executor does not provide mutation-state reconciliation"
+            )
+        reconcile()
+
+    def _ensure_mutation_state(self, operation: str, report: ExecutionReport) -> None:
+        state_check = getattr(self.executor, "mutation_state_uncertain", None)
+        if not callable(state_check):
+            return
+        try:
+            state_uncertain = bool(state_check())
+        except BaseException as exc:
+            failed = report.transition(
+                ExecutionPhase.FAILED,
+                state_certainty="uncertain",
+                rollback_status=RollbackStatus.STATE_UNCERTAIN,
+            )
+            setattr(exc, "execution", failed)  # noqa: B010
+            error = TransactionError(
+                "mutation state could not be determined",
+                operation=operation,
+            )
+            error.execution = failed
+            raise error from exc
+        if state_uncertain:
+            error = TransactionError(
+                "mutation is blocked by an uncertain session mutation state",
+                operation=operation,
+            )
+            error.execution = report.transition(
+                ExecutionPhase.FAILED,
+                state_certainty="uncertain",
+                rollback_status=RollbackStatus.STATE_UNCERTAIN,
+            )
+            raise error
 
     def _validate_params(self, spec: OpSpec, params: Mapping[str, Any]) -> dict[str, Any]:
         return validate_parameters(spec.parameters, params, operation=spec.name)

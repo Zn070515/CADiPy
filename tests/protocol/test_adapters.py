@@ -184,6 +184,15 @@ class FailingInspectionExecutor(_FakeExecutor):
     def begin_mutation(self, snapshot):
         return None
 
+    def mutation_state_uncertain(self):
+        return False
+
+    def mark_mutation_uncertain(self):
+        return None
+
+    def reconcile_mutation(self):
+        return None
+
     def commit_mutation(self, snapshot):
         return None
 

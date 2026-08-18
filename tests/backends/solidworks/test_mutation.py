@@ -51,6 +51,17 @@ def snapshot(*, created_resource: bool = False, document_id: str = "doc-1") -> M
     )
 
 
+def test_uncertain_mutation_state_persists_until_reconciliation() -> None:
+    executor = PythonComSolidWorksExecutor()
+
+    assert executor.mutation_state_uncertain() is False
+    executor.mark_mutation_uncertain()
+    assert executor.mutation_state_uncertain() is True
+
+    executor.reconcile_mutation()
+    assert executor.mutation_state_uncertain() is False
+
+
 def test_created_resource_rollback_closes_only_owned_document(monkeypatch) -> None:
     executor = PythonComSolidWorksExecutor()
     handle = DocumentHandle("created-1", DocumentType.PART, "Part1")

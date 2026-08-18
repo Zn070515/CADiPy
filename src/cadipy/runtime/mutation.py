@@ -23,6 +23,12 @@ class MutationSnapshot:
 
 
 class MutationCapability(Protocol):
+    def mutation_state_uncertain(self) -> bool: ...
+
+    def mark_mutation_uncertain(self) -> None: ...
+
+    def reconcile_mutation(self) -> None: ...
+
     def begin_mutation(self, snapshot: MutationSnapshot) -> None: ...
 
     def commit_mutation(self, snapshot: MutationSnapshot) -> None: ...
@@ -54,6 +60,32 @@ class MutationScope:
 
     def __enter__(self) -> MutationScope:  # noqa: PYI034
         try:
+            state_uncertain = self.capability.mutation_state_uncertain()
+        except BaseException as exc:
+            self._mark_mutation_uncertain()
+            self.report = self.report.transition(
+                ExecutionPhase.FAILED,
+                state_certainty="uncertain",
+                rollback_status=RollbackStatus.STATE_UNCERTAIN,
+            )
+            self._finished = True
+            self._attach_execution(exc)
+            error = TransactionError("mutation scope could not determine session state")
+            error.execution = self.report
+            raise error from exc
+        if state_uncertain:
+            self.report = self.report.transition(
+                ExecutionPhase.FAILED,
+                state_certainty="uncertain",
+                rollback_status=RollbackStatus.STATE_UNCERTAIN,
+            )
+            self._finished = True
+            error = TransactionError(
+                "mutation scope is blocked by an uncertain session mutation state"
+            )
+            error.execution = self.report
+            raise error
+        try:
             self.capability.begin_mutation(self.snapshot)
         except BaseException as exc:
             self.report = self.report.transition(
@@ -61,6 +93,7 @@ class MutationScope:
                 state_certainty="uncertain",
                 rollback_status=RollbackStatus.STATE_UNCERTAIN,
             )
+            self._mark_mutation_uncertain()
             self._finished = True
             self._attach_execution(exc)
             error = TransactionError("mutation scope could not begin")
@@ -180,6 +213,8 @@ class MutationScope:
             state_certainty="certain" if verified else "uncertain",
             rollback_status=rollback_status,
         )
+        if not verified:
+            self._mark_mutation_uncertain()
         if self._rollback_error is not None:
             self._attach_execution(self._rollback_error)
         self._finished = True
@@ -204,6 +239,9 @@ class MutationScope:
             cause.execution = self.report
         else:
             setattr(cause, "execution", self.report)  # noqa: B010
+
+    def _mark_mutation_uncertain(self) -> None:
+        self.capability.mark_mutation_uncertain()
 
 
 def snapshot_for_document(
