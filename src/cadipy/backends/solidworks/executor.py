@@ -92,6 +92,7 @@ class PythonComSolidWorksExecutor:
         self._owns_application = False
         self._mutation_snapshot: MutationSnapshot | None = None
         self._undo_recording = False
+        self._undo_attempted = False
 
     def __enter__(self) -> Any:
         self.connect()
@@ -202,13 +203,23 @@ class PythonComSolidWorksExecutor:
     def begin_mutation(self, snapshot: MutationSnapshot) -> None:
         self._mutation_snapshot = snapshot
         self._undo_recording = False
+        self._undo_attempted = False
         model = self._documents.get(snapshot.target_identity.document_id)
-        if model is None:
+        if snapshot.created_resource and model is None:
             return
+        if model is None:
+            raise ComOperationError(
+                "existing target is not owned by this executor",
+                operation="solidworks.mutation.begin",
+            )
         start = getattr(getattr(model, "Extension", None), "StartRecordingUndoObject", None)
-        if callable(start):
-            start()
-            self._undo_recording = True
+        if not callable(start):
+            raise ComOperationError(
+                "SOLIDWORKS document does not support undo recording",
+                operation="solidworks.mutation.begin",
+            )
+        start()
+        self._undo_recording = True
 
     def record_created_resource(self, resource_id: str) -> None:
         if self._mutation_snapshot is not None:
@@ -264,17 +275,16 @@ class PythonComSolidWorksExecutor:
                     "SOLIDWORKS document does not support undo",
                     operation="solidworks.mutation.rollback",
                 )
-            if undo(1) is not True:
-                raise ComOperationError(
-                    "SOLIDWORKS undo did not complete",
-                    operation="solidworks.mutation.rollback",
-                )
+            undo(1)
+            self._undo_attempted = True
 
     def verify_rollback(self, snapshot: MutationSnapshot) -> bool:
         if snapshot.created_resource and snapshot.created_resource_id:
             return snapshot.created_resource_id not in self._documents
+        if not self._undo_attempted:
+            return False
         if snapshot.model_fingerprint is None:
-            return self._undo_recording
+            return False
         document = self._documents.get(snapshot.target_identity.document_id)
         if document is None:
             return False

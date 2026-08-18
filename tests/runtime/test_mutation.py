@@ -32,15 +32,21 @@ class FakeMutationCapability:
     rollback_verified: bool = True
     fail_rollback: bool = False
     raise_on_verify: bool = False
+    fail_begin: bool = False
+    fail_commit: bool = False
 
     def __post_init__(self) -> None:
         self.calls: list[str] = []
 
     def begin_mutation(self, snapshot: MutationSnapshot) -> None:
+        if self.fail_begin:
+            raise RuntimeError("begin failed")
         self.calls.append("begin")
 
     def commit_mutation(self, snapshot: MutationSnapshot) -> None:
         self.calls.append("commit")
+        if self.fail_commit:
+            raise RuntimeError("commit failed")
 
     def rollback_mutation(self, snapshot: MutationSnapshot) -> None:
         self.calls.append("rollback")
@@ -69,6 +75,34 @@ def test_mutation_scope_commits_after_rebuild_and_verification() -> None:
     assert scope.report.phase is ExecutionPhase.COMMITTED
     assert scope.report.rollback_status is RollbackStatus.NOT_ATTEMPTED
     assert capability.calls == ["begin", "rebuild", "commit"]
+
+
+def test_mutation_scope_reports_begin_failure_without_mutating() -> None:
+    capability = FakeMutationCapability(fail_begin=True)
+    scope = MutationScope(capability, make_snapshot())
+
+    with pytest.raises(TransactionError) as caught:
+        scope.__enter__()
+
+    assert caught.value.execution is scope.report
+    assert scope.report.phase is ExecutionPhase.FAILED
+    assert scope.report.state_certainty == "uncertain"
+    assert scope.report.rollback_status is RollbackStatus.STATE_UNCERTAIN
+    assert capability.calls == []
+
+
+def test_mutation_scope_rolls_back_after_commit_failure() -> None:
+    capability = FakeMutationCapability(fail_commit=True)
+    scope = MutationScope(capability, make_snapshot())
+
+    with pytest.raises(RuntimeError), scope:
+        scope.step("create feature", lambda: None)
+        scope.rebuild()
+        scope.verify((lambda: True,))
+
+    assert scope.report.phase is ExecutionPhase.FAILED
+    assert scope.report.rollback_status is RollbackStatus.ROLLED_BACK
+    assert capability.calls == ["begin", "rebuild", "commit", "rollback", "verify_rollback"]
 
 
 def test_mutation_scope_reports_rollback_failure_without_success() -> None:

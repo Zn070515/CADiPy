@@ -31,7 +31,7 @@ class FakeModel:
     undo_result: bool = True
     undo_calls: list[int] = field(default_factory=list)
 
-    def EditUndo2(self, steps: int) -> bool:
+    def EditUndo2(self, steps: int) -> object:
         self.undo_calls.append(steps)
         return self.undo_result
 
@@ -88,24 +88,71 @@ def test_existing_target_rollback_finishes_recording_and_checks_fingerprint() ->
 
 
 def test_existing_target_is_not_closed_when_fingerprint_is_available() -> None:
+    model = FakeModel(FakeExtension(), undo_result=None)
     executor = PythonComSolidWorksExecutor()
     handle = DocumentHandle("doc-1", DocumentType.PART, "Part1")
-    executor._documents[handle.id] = object()
+    executor._documents[handle.id] = model
     executor._document_handles[handle.id] = handle
     executor._document_fingerprint = lambda document: "before"
     closed: list[str] = []
     executor.close = lambda document: closed.append(document.id)
 
     target = snapshot()
+    executor.begin_mutation(target)
+    executor.rollback_mutation(target)
     assert executor.verify_rollback(target) is True
     assert closed == []
 
 
-def test_undo_false_return_is_a_rollback_failure() -> None:
-    model = FakeModel(FakeExtension(), undo_result=False)
+def test_existing_target_without_undo_attempt_cannot_verify_rollback() -> None:
+    executor = PythonComSolidWorksExecutor()
+    handle = DocumentHandle("doc-1", DocumentType.PART, "Part1")
+    executor._documents[handle.id] = object()
+    executor._document_handles[handle.id] = handle
+    executor._document_fingerprint = lambda document: "before"
+
+    assert executor.verify_rollback(snapshot()) is False
+
+
+def test_void_undo_return_is_verified_by_fingerprint() -> None:
+    model = FakeModel(FakeExtension(), undo_result=None)
     executor = PythonComSolidWorksExecutor()
     handle = DocumentHandle("doc-1", DocumentType.PART, "Part1")
     executor._documents[handle.id] = model
+    executor._document_handles[handle.id] = handle
+    executor._document_fingerprint = lambda document: "before"
+    target = snapshot()
+    executor.begin_mutation(target)
+
+    executor.rollback_mutation(target)
+
+    assert model.undo_calls == [1]
+    assert executor.verify_rollback(target) is True
+
+
+def test_void_undo_with_changed_fingerprint_is_not_rolled_back() -> None:
+    model = FakeModel(FakeExtension(), undo_result=None)
+    executor = PythonComSolidWorksExecutor()
+    handle = DocumentHandle("doc-1", DocumentType.PART, "Part1")
+    executor._documents[handle.id] = model
+    executor._document_handles[handle.id] = handle
+    executor._document_fingerprint = lambda document: "after"
+    target = snapshot()
+    executor.begin_mutation(target)
+
+    executor.rollback_mutation(target)
+
+    assert executor.verify_rollback(target) is False
+
+
+def test_missing_undo_support_cannot_report_rolled_back() -> None:
+    class ModelWithoutUndo:
+        def __init__(self) -> None:
+            self.Extension = FakeExtension()
+
+    executor = PythonComSolidWorksExecutor()
+    handle = DocumentHandle("doc-1", DocumentType.PART, "Part1")
+    executor._documents[handle.id] = ModelWithoutUndo()
     executor._document_handles[handle.id] = handle
     target = snapshot()
     executor.begin_mutation(target)
@@ -113,7 +160,22 @@ def test_undo_false_return_is_a_rollback_failure() -> None:
     with pytest.raises(ComOperationError):
         executor.rollback_mutation(target)
 
-    assert model.undo_calls == [1]
+    assert executor._undo_recording is False
+
+
+def test_missing_undo_recording_support_is_rejected_at_begin() -> None:
+    class ModelWithoutRecording:
+        Extension = object()
+
+    executor = PythonComSolidWorksExecutor()
+    handle = DocumentHandle("doc-1", DocumentType.PART, "Part1")
+    executor._documents[handle.id] = ModelWithoutRecording()
+    executor._document_handles[handle.id] = handle
+
+    with pytest.raises(ComOperationError):
+        executor.begin_mutation(snapshot())
+
+    assert executor._undo_recording is False
 
 
 def test_finish_false_return_prevents_undo() -> None:

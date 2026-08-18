@@ -51,7 +51,18 @@ class MutationScope:
         self._rollback_attempted = False
 
     def __enter__(self) -> MutationScope:  # noqa: PYI034
-        self.capability.begin_mutation(self.snapshot)
+        try:
+            self.capability.begin_mutation(self.snapshot)
+        except BaseException as exc:
+            self.report = self.report.transition(
+                ExecutionPhase.FAILED,
+                state_certainty="uncertain",
+                rollback_status=RollbackStatus.STATE_UNCERTAIN,
+            )
+            self._finished = True
+            error = TransactionError("mutation scope could not begin")
+            error.execution = self.report
+            raise error from exc
         self._entered = True
         return self
 
