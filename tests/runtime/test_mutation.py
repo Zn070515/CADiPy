@@ -37,6 +37,7 @@ class FakeMutationCapability:
 
     def __post_init__(self) -> None:
         self.calls: list[str] = []
+        self.raw_rollback_error: RuntimeError | None = None
 
     def begin_mutation(self, snapshot: MutationSnapshot) -> None:
         if self.fail_begin:
@@ -51,7 +52,8 @@ class FakeMutationCapability:
     def rollback_mutation(self, snapshot: MutationSnapshot) -> None:
         self.calls.append("rollback")
         if self.fail_rollback:
-            raise RuntimeError("rollback failed")
+            self.raw_rollback_error = RuntimeError("rollback failed")
+            raise self.raw_rollback_error
 
     def verify_rollback(self, snapshot: MutationSnapshot) -> bool:
         self.calls.append("verify_rollback")
@@ -131,6 +133,18 @@ def test_mutation_scope_reports_failed_rollback_as_typed_failure() -> None:
     assert scope.report.rollback_status is RollbackStatus.ROLLBACK_FAILED
     assert caught.value.execution is scope.report
     assert capability.calls == ["begin", "rollback"]
+
+
+def test_raw_rollback_exception_retains_scoped_execution_report() -> None:
+    capability = FakeMutationCapability(fail_rollback=True)
+    scope = MutationScope(capability, make_snapshot())
+
+    with pytest.raises(TransactionError) as caught, scope:
+        scope.step("forced failure", lambda: (_ for _ in ()).throw(ValueError("forced")))
+
+    assert capability.raw_rollback_error is not None
+    assert capability.raw_rollback_error.execution is scope.report
+    assert caught.value.execution is scope.report
 
 
 def test_mutation_scope_reports_verification_exception_as_uncertain_state() -> None:

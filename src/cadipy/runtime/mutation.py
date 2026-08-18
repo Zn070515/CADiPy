@@ -50,6 +50,7 @@ class MutationScope:
         self._finished = False
         self._rollback_attempted = False
         self._rebuild_succeeded = False
+        self._rollback_error: BaseException | None = None
 
     def __enter__(self) -> MutationScope:  # noqa: PYI034
         try:
@@ -156,15 +157,18 @@ class MutationScope:
         if self._rollback_attempted:
             return self.report
         self._rollback_attempted = True
+        self._rollback_error = None
         try:
             self.capability.rollback_mutation(self.snapshot)
-        except BaseException:
+        except BaseException as exc:
+            self._rollback_error = exc
             rollback_status = RollbackStatus.ROLLBACK_FAILED
             verified = False
         else:
             try:
                 verified = bool(self.capability.verify_rollback(self.snapshot))
-            except BaseException:
+            except BaseException as exc:
+                self._rollback_error = exc
                 rollback_status = RollbackStatus.STATE_UNCERTAIN
                 verified = False
             else:
@@ -176,6 +180,8 @@ class MutationScope:
             state_certainty="certain" if verified else "uncertain",
             rollback_status=rollback_status,
         )
+        if self._rollback_error is not None:
+            self._attach_execution(self._rollback_error)
         self._finished = True
         return self.report
 
