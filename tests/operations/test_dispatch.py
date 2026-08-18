@@ -197,6 +197,7 @@ def test_rectangular_extrude_rejects_unsupported_rollback_before_create() -> Non
         )
 
     assert caught.value.execution.state_certainty == "uncertain"
+    assert caught.value.execution.rollback_status is RollbackStatus.STATE_UNCERTAIN
     assert executor.created is False
 
 

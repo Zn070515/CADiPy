@@ -132,7 +132,15 @@ class OperationDispatcher:
                     if isinstance(exc, VerificationError)
                     else ExecutionPhase.FAILED
                 )
-                failed = report.transition(failure_phase, state_certainty="uncertain")
+                failed = report.transition(
+                    failure_phase,
+                    state_certainty="uncertain",
+                    rollback_status=(
+                        RollbackStatus.STATE_UNCERTAIN
+                        if isinstance(exc, CapabilityUnavailableError)
+                        else None
+                    ),
+                )
             setattr(exc, "execution", failed)  # noqa: B010
             raise
 

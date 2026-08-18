@@ -124,6 +124,7 @@ class MutationScope:
             return result
 
     def mark_created_resource(self, resource_id: str) -> None:
+        self._require_entered("mark_created_resource")
         self.snapshot = replace(
             self.snapshot,
             created_resource=True,

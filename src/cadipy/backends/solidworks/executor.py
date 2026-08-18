@@ -332,9 +332,10 @@ class PythonComSolidWorksExecutor:
         if snapshot.model_fingerprint is None:
             return False
         document = self._documents.get(snapshot.target_identity.document_id)
-        if document is None:
+        handle = self._document_handles.get(snapshot.target_identity.document_id)
+        if document is None or handle is None:
             return False
-        return self._document_fingerprint(document) == snapshot.model_fingerprint
+        return self._document_fingerprint(handle) == snapshot.model_fingerprint
 
     def _document_fingerprint(self, document: DocumentHandle) -> str:
         inspection = self.inspect_document(document)

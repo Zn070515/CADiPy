@@ -163,6 +163,32 @@ def test_existing_target_rollback_finishes_recording_and_checks_fingerprint() ->
     assert executor.verify_rollback(target) is True
 
 
+def test_existing_target_fingerprint_uses_resolved_document_handle() -> None:
+    class InspectableModel(FakeModel):
+        GetType = 1
+        GetTitle = "Part1"
+        GetPathName = ""
+        FirstFeature = None
+
+        def GetBodies2(self, body_type: int, visible: bool) -> tuple[object, ...]:
+            return ()
+
+        def GetPartBox(self, include_hidden: bool) -> tuple[float, ...]:
+            return (0.0, 0.0, 0.0, 0.1, 0.1, 0.1)
+
+    executor = PythonComSolidWorksExecutor()
+    handle = DocumentHandle("doc-1", DocumentType.PART, "Part1")
+    model = InspectableModel(FakeExtension(), undo_result=None)
+    executor._documents[handle.id] = model
+    executor._document_handles[handle.id] = handle
+
+    target = replace(snapshot(), model_fingerprint=executor._document_fingerprint(handle))
+    executor.begin_mutation(target)
+    executor.rollback_mutation(target)
+
+    assert executor.verify_rollback(target) is True
+
+
 def test_existing_target_is_not_closed_when_fingerprint_is_available() -> None:
     model = FakeModel(FakeExtension(), undo_result=None)
     executor = PythonComSolidWorksExecutor()

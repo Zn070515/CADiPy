@@ -258,6 +258,8 @@ def test_mutation_scope_rejects_all_lifecycle_actions_before_entry() -> None:
         scope.commit()
     with pytest.raises(TransactionError, match="successfully entered"):
         scope.rollback()
+    with pytest.raises(TransactionError, match="successfully entered"):
+        scope.mark_created_resource("before-entry")
 
     assert action_called is False
     assert capability.calls == []
