@@ -27,7 +27,7 @@ runner 应使用独立目录和交互式桌面 session，例如 `C:\actions-runn
 
 ## 生命周期与清理
 
-workflow 开始时会拒绝已有的 `SLDWORKS.exe`，使本 job 不会附着到不受控的已有实例。preflight 使用全新的 `launch(visible=False)` session 创建并拥有隐藏实例，读取 revision 和 visibility 后关闭它；集成 fixture 也只关闭 CADiPy 创建的文档和实例。测试生命周期禁止在 attach session 中再调用 `application.launch`，因为当前 backend 会把已附着的 application 重新标记为 launch-owned，断开时可能调用 `ExitApp`。
+workflow 开始时会拒绝已有的 `SLDWORKS.exe`，使本 job 不会附着到不受控的已有实例。preflight 使用全新的 `launch(visible=False)` session 创建并拥有隐藏实例，读取 revision 和 visibility 后关闭它；集成 fixture 也只关闭 CADiPy 创建的文档和实例。backend 实现了 application ownership state machine：同一模式的 acquisition 幂等，冲突的 attach/launch acquisition 抛出 `ApplicationOwnershipError` 且不会重新分类已有 application；disconnect 只退出 launch-owned 实例。
 
 workflow 结束时只检查是否有 `SLDWORKS.exe` 残留，不执行进程级强杀。若残留，job 失败并保留证据供诊断。当前没有删除 pywin32 `gen_py` cache 的步骤；只有真实运行证明需要时才引入有边界的自愈逻辑。
 
@@ -39,4 +39,4 @@ session 的 strict 测试通过公开 session façade 运行；fixture 只断言
 
 strict 模式由 `CADIPY_REQUIRE_REAL_SOLIDWORKS=1`（或 `--real-solidworks`）启用。缺少 Windows、Python 3.12、SOLIDWORKS、COM、Revision `34.3.2`，或 fixture/清理失败时必须 FAIL，不能静默 skip。受支持 runner 是 Windows 11 x64、labels `self-hosted`, `windows`, `x64`, `solidworks`，并使用单个串行 job；fork PR 不得在该 runner 执行。
 
-preflight 会拒绝 job 开始前已经存在的 `SLDWORKS.exe`，因此 strict job 不会附着到该进程。除非调用方违反 attach-to-launch 的安全生命周期，fixture 只清理本次 job 明确创建并拥有的实例和文档；当前 backend 并不以代码强制拒绝该 transition。普通 command exception 会交付给调用方且 host 继续运行；timeout 会让调用方收到内置 `TimeoutError` 并让 host failed，后续提交才会得到 `WorkerError`；worker loop/startup/cleanup failure 也会使 host failed 并拒绝后续工作。COM/进程崩溃不提供自动恢复保证，timeout 或不确定 rollback 的证据要求清理 session 并重新连接，不能用自动重试冒充成功。该执行 runtime 没有 ACID 或 exactly-once 保证。
+preflight 会拒绝 job 开始前已经存在的 `SLDWORKS.exe`，因此 strict job 不会附着到该进程。fixture 只清理本次 job 明确创建并拥有的实例和文档；backend 也会以 `ApplicationOwnershipError` 强制拒绝 attach-to-launch ownership conflict。普通 command exception 会交付给调用方且 host 继续运行；timeout 会让调用方收到内置 `TimeoutError` 并让 host failed，后续提交才会得到 `WorkerError`；worker loop/startup/cleanup failure 也会使 host failed 并拒绝后续工作。COM/进程崩溃不提供自动恢复保证，timeout 或不确定 rollback 的证据要求清理 session 并重新连接，不能用自动重试冒充成功。该执行 runtime 没有 ACID 或 exactly-once 保证。

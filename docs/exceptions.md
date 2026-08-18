@@ -14,4 +14,6 @@
 
 错误结果还可包含 `state_certainty`。不要把“调用返回”解释为“模型已正确提交”：成功必须有 `ok=true` 和 `phase=committed`，而必需验证失败在 protocol envelope 中必须是失败结果。该 runtime 只提供 bounded rollback，不提供 ACID、crash-safe 或 exactly-once 语义；它也不承诺自动恢复 SOLIDWORKS 进程崩溃。
 
-连接生命周期也属于错误处理的一部分：`connect()` 以 attach 模式开始，`launch()` 以 launch 模式开始新的 session。不要在已 attach 的 session 中调用 `application.launch`：当前 backend 会保留原 application 引用却改写 ownership 标记，之后 disconnect 可能终止原先附着的实例；实现当前不会拒绝这个 transition。需要 launch 时先结束 attach session，再创建新的 `launch()` session。回滚只清理明确由 CADiPy 创建并拥有的资源。
+连接生命周期也属于错误处理的一部分：`connect()` 以 attach 模式开始，`launch()` 以 launch 模式开始新的 session。同一模式的 acquisition 是幂等的；冲突的 attach/launch acquisition 会抛出稳定的 `ApplicationOwnershipError`，不能重新分类已有 application。只有 CADiPy 自己 launch-owned 的实例才会在 disconnect 时退出。回滚只清理明确由 CADiPy 创建并拥有的资源。
+
+文件持久化也有独立的安全 guard。`document.save` 和 composite `save_path` 默认使用 `overwrite=False`；目标文件已存在时，会在 `SaveAs2` 之前抛出 `FileConflictError`，原文件保持不变。只有显式 `overwrite=True` 才允许替换；如果替换后后续 operation 失败，没有 backup 时回滚必须报告不确定。

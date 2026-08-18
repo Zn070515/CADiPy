@@ -512,7 +512,9 @@ class OperationDispatcher:
                 postconditions: list[MutationAction] = [lambda: verification.passed]
                 if params.get("save_path"):
                     path = Path(params["save_path"])
-                    scope.mark_file_created(path)
+                    existed_before = path.exists()
+                    if not existed_before or params["overwrite"]:
+                        scope.mark_file_created(path, existed_before=existed_before)
                     save_report = scope.step(
                         "save",
                         lambda: self.executor.save(

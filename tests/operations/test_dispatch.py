@@ -22,6 +22,7 @@ from cadipy.domain.documents import DocumentType
 from cadipy.domain.errors import (
     CapabilityUnavailableError,
     DocumentTypeError,
+    FileConflictError,
     InvalidArgumentError,
     ProtocolError,
     RebuildError,
@@ -302,6 +303,35 @@ def test_composite_save_failure_deletes_new_scope_file(tmp_path: Path) -> None:
     assert executor.rollback_snapshot.file_path == save_path
     assert executor.rollback_snapshot.file_existed_before is False
     assert executor.rollback_snapshot.file_created_by_scope is True
+
+
+def test_composite_save_conflict_preserves_existing_file_and_is_certain(
+    tmp_path: Path,
+) -> None:
+    executor = FileSnapshotPersistenceFailureExecutor()
+    save_path = tmp_path / "existing-no-overwrite.SLDPRT"
+    save_path.write_bytes(b"original")
+
+    with pytest.raises(FileConflictError) as caught:
+        OperationDispatcher(executor).dispatch(
+            {
+                "id": "existing-file-conflict",
+                "operation": "part.create_rectangular_extrude",
+                "params": {
+                    "width_mm": 100.0,
+                    "height_mm": 60.0,
+                    "depth_mm": 3.0,
+                    "save_path": str(save_path),
+                },
+            }
+        )
+
+    assert caught.value.execution.rollback_status is RollbackStatus.ROLLED_BACK
+    assert caught.value.execution.state_certainty == "certain"
+    assert save_path.read_bytes() == b"original"
+    assert executor.rollback_snapshot is not None
+    assert executor.rollback_snapshot.file_path is None
+    assert executor.rollback_snapshot.file_overwritten is False
 
 
 def test_composite_overwrite_failure_is_uncertain_without_file_backup(tmp_path: Path) -> None:
@@ -906,7 +936,7 @@ class FileSnapshotPersistenceFailureExecutor(PersistenceFailureExecutor):
     ) -> SaveReport:
         self.calls.append("save")
         if path.exists() and not overwrite:
-            raise TransactionError("test executor requires explicit overwrite")
+            raise FileConflictError("test executor requires explicit overwrite")
         path.write_bytes(b"saved-by-cadipy")
         return SaveReport(True, path)
 
