@@ -197,8 +197,10 @@ class PythonComSolidWorksExecutor:
             try:
                 application.exit_application(app)
             finally:
+                app = None
                 self._apartment.__exit__(None, None, None)
         else:
+            app = None
             self._apartment.__exit__(None, None, None)
 
     def _require_application(self) -> Any:
@@ -328,7 +330,11 @@ class PythonComSolidWorksExecutor:
             if document is None:
                 return False
             live_documents = documents.list_open_documents(self._require_application())
-            return not any(self._same_document(document, live) for live in live_documents)
+            # The created document proxy is intentionally retained for audit/debug
+            # state, but is no longer valid for COM identity calls after close().
+            # Verify closure using the live-document collection without invoking
+            # methods on that stale proxy.
+            return not any(live is document for live in live_documents)
         if not self._undo_attempted:
             return False
         if snapshot.model_fingerprint is None:

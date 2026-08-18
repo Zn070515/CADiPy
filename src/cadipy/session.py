@@ -124,12 +124,14 @@ class CadipySession:
         *,
         document_type: DocumentType = DocumentType.PART,
     ) -> DocumentHandle:
-        return _handle_from_data(
+        handle = _handle_from_data(
             self.execute(
                 "document.open",
                 params={"path": str(path), "document_type": document_type.value},
             ).data
         )
+        self._host.submit(self._reconcile_registry)
+        return handle
 
     def inspect(
         self,
@@ -150,7 +152,9 @@ class CadipySession:
         *,
         target: Mapping[str, Any] | DocumentHandle,
     ) -> OperationResult:
-        return self.execute("document.close", target=target)
+        result = self.execute("document.close", target=target)
+        self._host.submit(self._reconcile_registry)
+        return result
 
     def set_visibility(self, visible: bool) -> OperationResult:
         return self.execute("application.set_visibility", params={"visible": visible})
@@ -187,6 +191,9 @@ class CadipySession:
     def _cleanup_runtime(self) -> None:
         if self._registry is not None:
             self._registry.clear()
+
+    def _reconcile_registry(self) -> None:
+        self._registry_or_raise().reconcile(self._executor_or_raise().list_documents())
 
     def _executor_or_raise(self) -> SolidWorksExecutor:
         if self._executor is None:

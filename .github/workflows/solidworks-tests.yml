@@ -80,7 +80,11 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           Write-Host "Runner: $env:RUNNER_NAME"
+          Write-Host "Runner labels: self-hosted, windows, x64, solidworks"
           Write-Host "OS: $([System.Environment]::OSVersion.VersionString)"
+          if ($env:CADIPY_REQUIRE_REAL_SOLIDWORKS -ne "1") {
+            throw "Strict SOLIDWORKS mode is not enabled."
+          }
           if ($env:CADIPY_INSTALL_FROM_WHEEL -eq "true") {
             & .venv-wheel\Scripts\python.exe scripts\solidworks_preflight.py
           } else {
@@ -92,10 +96,14 @@ jobs:
           CADIPY_INSTALL_FROM_WHEEL: ${{ inputs.install_from_wheel }}
         run: |
           $ErrorActionPreference = "Stop"
+          Write-Host "Strict gate: CADIPY_REQUIRE_REAL_SOLIDWORKS=$env:CADIPY_REQUIRE_REAL_SOLIDWORKS"
+          if ($env:CADIPY_REQUIRE_REAL_SOLIDWORKS -ne "1") {
+            throw "Strict SOLIDWORKS mode is not enabled."
+          }
           if ($env:CADIPY_INSTALL_FROM_WHEEL -eq "true") {
-            & .venv-wheel\Scripts\python.exe -m pytest tests/integration/solidworks -m real_solidworks --real-solidworks -q
+            & .venv-wheel\Scripts\python.exe -m pytest tests/integration/solidworks -m real_solidworks --real-solidworks -ra -q
           } else {
-            uv run --no-sync pytest tests/integration/solidworks -m real_solidworks --real-solidworks -q
+            uv run --no-sync pytest tests/integration/solidworks -m real_solidworks --real-solidworks -ra -q
           }
       - name: Verify SOLIDWORKS cleanup
         if: always()
@@ -107,3 +115,4 @@ jobs:
             $ids = ($remaining | ForEach-Object Id) -join ", "
             throw "SOLIDWORKS process remained after the CADiPy-owned integration run (PID: $ids). No process was terminated."
           }
+          Write-Host "Cleanup: no SLDWORKS processes remain."

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 
 import pytest
 
 from cadipy.api import execute
-from cadipy.backends.executor import ApplicationInfo
+from cadipy.backends.executor import ApplicationInfo, DocumentInspection
+from cadipy.domain.documents import DocumentType
 from cadipy.domain.errors import CadipyError, SessionClosedError
 from cadipy.session import CadipySession
 
@@ -81,6 +83,58 @@ def test_session_exit_disconnects_when_dispatch_raises() -> None:
         session.execute("application.info")
 
     assert executor.disconnected is True
+
+
+def test_session_reconciles_document_registry_after_close_and_open() -> None:
+    executor = _DocumentExecutor()
+
+    with CadipySession(executor_factory=lambda: executor, connection_mode="attach") as session:
+        original = session.create_part()
+        session.close(target=original)
+        assert original.path is not None
+        reopened = session.open(original.path)
+        inspected = session.inspect(target=reopened)
+
+    assert inspected.ok is True
+    assert reopened.id != original.id
+
+
+class _DocumentExecutor(FakeExecutor):
+    def __init__(self) -> None:
+        self.documents = {}
+        self.counter = 0
+
+    def list_documents(self):
+        return tuple(self.documents.values())
+
+    def create_part(self):
+        from cadipy.backends.executor import DocumentHandle
+
+        self.counter += 1
+        document = DocumentHandle(
+            f"doc-{self.counter}",
+            DocumentType.PART,
+            f"Part{self.counter}",
+            Path(f"part-{self.counter}.SLDPRT"),
+        )
+        self.documents[document.id] = document
+        return document
+
+    def close(self, document):
+        self.documents.pop(document.id)
+
+    def open_document(self, path, document_type=DocumentType.PART):
+        from cadipy.backends.executor import DocumentHandle
+
+        self.counter += 1
+        document = DocumentHandle(f"doc-{self.counter}", document_type, f"Part{self.counter}", path)
+        self.documents[document.id] = document
+        return document
+
+    def inspect_document(self, document):
+        return DocumentInspection(
+            document.id, document.document_type, document.path, document.title
+        )
 
 
 def test_api_execute_factory_uses_host_backed_session() -> None:

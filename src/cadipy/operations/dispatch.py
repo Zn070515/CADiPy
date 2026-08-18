@@ -281,6 +281,15 @@ class OperationDispatcher:
             assert target is not None
             self.executor.close(target)
             return {"closed_document_id": target.id}
+        if operation == "document.save":
+            assert target is not None
+            saved = self.executor.save(target, Path(params["path"]))
+            if not saved.success:
+                raise TransactionError(
+                    "SOLIDWORKS did not save the requested document",
+                    operation=operation,
+                )
+            return _dict(saved)
         if operation == "document.inspect":
             assert target is not None
             return _dict(self.executor.inspect_document(target))
@@ -413,6 +422,10 @@ class OperationDispatcher:
             sketch = _sketch_from_value(params["sketch"], operation)
             dimension = _dimension_from_value(params["dimension"], operation)
             return _dict(self.executor.inspect_dimension(target, sketch, dimension))
+        if operation == "part.create_extrude":
+            assert target is not None
+            sketch = _sketch_from_value(params["sketch"], operation)
+            return {"feature": _dict(self.executor.extrude(target, sketch, params["depth_mm"]))}
         if operation == "part.create_rectangular_extrude":
             snapshot = MutationSnapshot(
                 target_identity=DocumentIdentity(
