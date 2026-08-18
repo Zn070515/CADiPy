@@ -20,9 +20,11 @@ from cadipy.backends.executor import (
 )
 from cadipy.domain.documents import DocumentType
 from cadipy.domain.errors import (
+    CapabilityUnavailableError,
     DocumentTypeError,
     InvalidArgumentError,
     ProtocolError,
+    RebuildError,
     TargetNotFoundError,
     VerificationError,
 )
@@ -46,6 +48,23 @@ class FakeExecutor:
 
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.mutation_calls: list[str] = []
+
+    def begin_mutation(self, snapshot: object) -> None:
+        self.mutation_calls.append("begin")
+
+    def commit_mutation(self, snapshot: object) -> None:
+        self.mutation_calls.append("commit")
+
+    def rollback_mutation(self, snapshot: object) -> None:
+        self.mutation_calls.append("rollback")
+
+    def verify_rollback(self, snapshot: object) -> bool:
+        self.mutation_calls.append("verify_rollback")
+        return True
+
+    def record_created_resource(self, resource_id: str) -> None:
+        self.mutation_calls.append(f"created:{resource_id}")
 
     def connect(self) -> ApplicationInfo:
         self.calls.append("connect")
@@ -144,6 +163,44 @@ def test_required_verification_failure_raises_with_failed_execution_report() -> 
     assert caught.value.execution.phase is ExecutionPhase.FAILED
     assert caught.value.execution.state_certainty == "certain"
     assert caught.value.execution.rollback_status is RollbackStatus.ROLLED_BACK
+    assert executor.mutation_calls == [
+        "begin",
+        "created:doc-1",
+        "rollback",
+        "verify_rollback",
+    ]
+
+
+def test_rectangular_extrude_rejects_unsupported_rollback_before_create() -> None:
+    executor = UnsupportedMutationExecutor()
+
+    with pytest.raises(CapabilityUnavailableError) as caught:
+        OperationDispatcher(executor).dispatch(
+            {
+                "id": "unsupported-mutation",
+                "operation": "part.create_rectangular_extrude",
+                "params": {"width_mm": 100.0, "height_mm": 60.0, "depth_mm": 3.0},
+            }
+        )
+
+    assert caught.value.execution.state_certainty == "uncertain"
+    assert executor.created is False
+
+
+def test_unsuccessful_rebuild_fails_and_rolls_back() -> None:
+    executor = UnsuccessfulRebuildExecutor()
+
+    with pytest.raises(RebuildError) as caught:
+        OperationDispatcher(executor).dispatch(
+            {
+                "id": "rebuild-failure",
+                "operation": "part.create_rectangular_extrude",
+                "params": {"width_mm": 100.0, "height_mm": 60.0, "depth_mm": 3.0},
+            }
+        )
+
+    assert caught.value.execution.rollback_status is RollbackStatus.ROLLED_BACK
+    assert "commit" not in executor.mutation_calls
 
 
 def test_dimension_value_mismatch_fails_direct_dispatch_verification() -> None:
@@ -538,6 +595,20 @@ class FailingInspectionExecutor(FakeExecutor):
             False,
             True,
         )
+
+
+class UnsupportedMutationExecutor:
+    executor_kind = "unsupported"
+    created = False
+
+    def create_part(self) -> DocumentHandle:
+        self.created = True
+        return DocumentHandle("unsupported-doc", DocumentType.PART, "Part1")
+
+
+class UnsuccessfulRebuildExecutor(FakeExecutor):
+    def rebuild(self, document: DocumentHandle) -> RebuildReport:
+        return RebuildReport(False, errors=("forced rebuild failure",))
 
 
 class VisibilityMismatchExecutor:

@@ -12,6 +12,7 @@ from cadipy.audit.events import AuditEvent
 from cadipy.backends.executor import DocumentHandle, SketchHandle, SolidWorksExecutor
 from cadipy.domain.documents import DocumentType
 from cadipy.domain.errors import (
+    CapabilityUnavailableError,
     DocumentTypeError,
     InvalidArgumentError,
     ProtocolError,
@@ -42,30 +43,14 @@ if TYPE_CHECKING:
 TargetResolver = Callable[[TargetBinding], DocumentHandle]
 
 
-class _NoopMutationCapability:
-    def begin_mutation(self, _snapshot: MutationSnapshot) -> None:
-        return None
-
-    def commit_mutation(self, _snapshot: MutationSnapshot) -> None:
-        return None
-
-    def rollback_mutation(self, _snapshot: MutationSnapshot) -> None:
-        return None
-
-    def verify_rollback(self, _snapshot: MutationSnapshot) -> bool:
-        return True
-
-
-def _mutation_capability(executor: SolidWorksExecutor) -> MutationCapability:
+def _mutation_capability(executor: SolidWorksExecutor) -> MutationCapability | None:
     required = (
         "begin_mutation",
         "commit_mutation",
         "rollback_mutation",
         "verify_rollback",
     )
-    return (
-        executor if all(hasattr(executor, name) for name in required) else _NoopMutationCapability()
-    )
+    return executor if all(hasattr(executor, name) for name in required) else None
 
 
 class OperationDispatcher:
@@ -380,6 +365,11 @@ class OperationDispatcher:
                 created_resource=True,
             )
             capability = _mutation_capability(self.executor)
+            if capability is None:
+                raise CapabilityUnavailableError(
+                    "rectangular extrusion requires semantic rollback capability",
+                    operation=operation,
+                )
             with MutationScope(capability, snapshot) as scope:
                 document = scope.step("create part", self.executor.create_part)
                 scope.mark_created_resource(document.id)

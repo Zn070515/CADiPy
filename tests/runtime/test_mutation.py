@@ -4,8 +4,9 @@ from dataclasses import dataclass
 
 import pytest
 
+from cadipy.backends.executor import RebuildReport
 from cadipy.domain.documents import DocumentType
-from cadipy.domain.errors import TransactionError
+from cadipy.domain.errors import RebuildError, TransactionError
 from cadipy.domain.execution import ExecutionPhase, RollbackStatus
 from cadipy.domain.identities import DocumentIdentity
 from cadipy.runtime.mutation import MutationScope, MutationSnapshot
@@ -30,6 +31,7 @@ def make_snapshot(*, created_resource: bool = False) -> MutationSnapshot:
 class FakeMutationCapability:
     rollback_verified: bool = True
     fail_rollback: bool = False
+    raise_on_verify: bool = False
 
     def __post_init__(self) -> None:
         self.calls: list[str] = []
@@ -47,10 +49,13 @@ class FakeMutationCapability:
 
     def verify_rollback(self, snapshot: MutationSnapshot) -> bool:
         self.calls.append("verify_rollback")
+        if self.raise_on_verify:
+            raise RuntimeError("rollback verification unavailable")
         return self.rollback_verified
 
-    def rebuild(self) -> None:
+    def rebuild(self) -> RebuildReport:
         self.calls.append("rebuild")
+        return RebuildReport(success=True)
 
 
 def test_mutation_scope_commits_after_rebuild_and_verification() -> None:
@@ -91,6 +96,17 @@ def test_mutation_scope_reports_failed_rollback_as_typed_failure() -> None:
     assert capability.calls == ["begin", "rollback"]
 
 
+def test_mutation_scope_reports_verification_exception_as_uncertain_state() -> None:
+    capability = FakeMutationCapability(raise_on_verify=True)
+    scope = MutationScope(capability, make_snapshot())
+
+    with pytest.raises(TransactionError), scope:
+        scope.step("forced failure", lambda: (_ for _ in ()).throw(ValueError("forced")))
+
+    assert scope.report.rollback_status is RollbackStatus.STATE_UNCERTAIN
+    assert capability.calls == ["begin", "rollback", "verify_rollback"]
+
+
 def test_mutation_scope_does_not_retry_after_uncertain_rollback() -> None:
     capability = FakeMutationCapability(rollback_verified=False)
     scope = MutationScope(capability, make_snapshot())
@@ -115,3 +131,16 @@ def test_new_resource_snapshot_is_available_to_capability() -> None:
         scope.commit()
 
     assert snapshot.created_resource is True
+
+
+def test_unsuccessful_rebuild_rolls_back_before_verification_or_commit() -> None:
+    capability = FakeMutationCapability()
+    scope = MutationScope(capability, make_snapshot())
+
+    with pytest.raises(RebuildError) as caught, scope:
+        scope.step("create feature", lambda: None)
+        scope.rebuild(lambda: type("Rebuild", (), {"success": False})())
+
+    assert caught.value.execution is scope.report
+    assert scope.report.rollback_status is RollbackStatus.ROLLED_BACK
+    assert capability.calls == ["begin", "rollback", "verify_rollback"]

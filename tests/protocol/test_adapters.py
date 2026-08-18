@@ -181,6 +181,21 @@ class _RecordingExecutor(_FakeExecutor):
 
 
 class FailingInspectionExecutor(_FakeExecutor):
+    def begin_mutation(self, snapshot):
+        return None
+
+    def commit_mutation(self, snapshot):
+        return None
+
+    def rollback_mutation(self, snapshot):
+        return None
+
+    def verify_rollback(self, snapshot):
+        return True
+
+    def record_created_resource(self, resource_id):
+        return None
+
     def create_part(self):
         from cadipy.backends.executor import DocumentHandle
 

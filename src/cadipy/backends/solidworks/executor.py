@@ -224,10 +224,19 @@ class PythonComSolidWorksExecutor:
     def commit_mutation(self, snapshot: MutationSnapshot) -> None:
         model = self._documents.get(snapshot.target_identity.document_id)
         finish = getattr(getattr(model, "Extension", None), "FinishRecordingUndoObject2", None)
-        if self._undo_recording and callable(finish):
-            finish("CADiPy mutation", False)
+        if self._undo_recording:
+            if not callable(finish):
+                raise ComOperationError(
+                    "SOLIDWORKS undo recording cannot be finished",
+                    operation="solidworks.mutation.commit",
+                )
+            if finish("CADiPy mutation", False) is not True:
+                raise ComOperationError(
+                    "SOLIDWORKS undo recording did not finish",
+                    operation="solidworks.mutation.commit",
+                )
+            self._undo_recording = False
         self._mutation_snapshot = None
-        self._undo_recording = False
 
     def rollback_mutation(self, snapshot: MutationSnapshot) -> None:
         if snapshot.created_resource and snapshot.created_resource_id:
@@ -236,9 +245,30 @@ class PythonComSolidWorksExecutor:
                 self.close(self._document_handles[snapshot.created_resource_id])
         elif self._undo_recording:
             model = self._documents.get(snapshot.target_identity.document_id)
+            extension = getattr(model, "Extension", None)
+            finish = getattr(extension, "FinishRecordingUndoObject2", None)
+            if not callable(finish):
+                raise ComOperationError(
+                    "SOLIDWORKS undo recording cannot be finished",
+                    operation="solidworks.mutation.rollback",
+                )
+            if finish("CADiPy mutation", False) is not True:
+                raise ComOperationError(
+                    "SOLIDWORKS undo recording did not finish",
+                    operation="solidworks.mutation.rollback",
+                )
+            self._undo_recording = False
             undo = getattr(model, "EditUndo2", None)
-            if callable(undo):
-                undo()
+            if not callable(undo):
+                raise ComOperationError(
+                    "SOLIDWORKS document does not support undo",
+                    operation="solidworks.mutation.rollback",
+                )
+            if undo(1) is not True:
+                raise ComOperationError(
+                    "SOLIDWORKS undo did not complete",
+                    operation="solidworks.mutation.rollback",
+                )
 
     def verify_rollback(self, snapshot: MutationSnapshot) -> bool:
         if snapshot.created_resource and snapshot.created_resource_id:

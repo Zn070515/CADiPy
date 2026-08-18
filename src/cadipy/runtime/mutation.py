@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
-from cadipy.domain.errors import TransactionError, VerificationError
+from cadipy.domain.errors import RebuildError, TransactionError, VerificationError
 from cadipy.domain.execution import ExecutionPhase, ExecutionReport, RollbackStatus
 from cadipy.domain.identities import DocumentIdentity
 
@@ -92,6 +92,11 @@ class MutationScope:
             raise TransactionError("mutation capability does not provide rebuild")
         try:
             result = action()
+            if not getattr(result, "success", False):
+                raise RebuildError(  # noqa: TRY301
+                    "SOLIDWORKS rebuild was unsuccessful",
+                    details={"errors": tuple(getattr(result, "errors", ()))},
+                )
             self.report = self.report.transition(ExecutionPhase.REBUILT)
         except BaseException as exc:
             self._fail(exc, label="rebuild")
@@ -133,25 +138,25 @@ class MutationScope:
         if self._rollback_attempted:
             return self.report
         self._rollback_attempted = True
-        rollback_failed = False
         try:
             self.capability.rollback_mutation(self.snapshot)
-            verified = bool(self.capability.verify_rollback(self.snapshot))
         except BaseException:
-            rollback_failed = True
+            rollback_status = RollbackStatus.ROLLBACK_FAILED
             verified = False
+        else:
+            try:
+                verified = bool(self.capability.verify_rollback(self.snapshot))
+            except BaseException:
+                rollback_status = RollbackStatus.STATE_UNCERTAIN
+                verified = False
+            else:
+                rollback_status = (
+                    RollbackStatus.ROLLED_BACK if verified else RollbackStatus.STATE_UNCERTAIN
+                )
         self.report = self.report.transition(
             ExecutionPhase.FAILED,
             state_certainty="certain" if verified else "uncertain",
-            rollback_status=(
-                RollbackStatus.ROLLED_BACK
-                if verified
-                else (
-                    RollbackStatus.ROLLBACK_FAILED
-                    if rollback_failed
-                    else RollbackStatus.STATE_UNCERTAIN
-                )
-            ),
+            rollback_status=rollback_status,
         )
         self._finished = True
         return self.report
