@@ -281,25 +281,6 @@ class PythonComSolidWorksExecutor:
             file_overwritten=self._mutation_snapshot.file_overwritten,
         )
 
-    def record_created_file(self, path: Path, *, existed_before: bool) -> None:
-        if self._mutation_snapshot is None:
-            raise ComOperationError(
-                "created file was recorded outside a mutation",
-                operation="solidworks.mutation.file",
-            )
-        self._mutation_snapshot = MutationSnapshot(
-            target_identity=self._mutation_snapshot.target_identity,
-            dirty=self._mutation_snapshot.dirty,
-            save_observation=self._mutation_snapshot.save_observation,
-            model_fingerprint=self._mutation_snapshot.model_fingerprint,
-            created_resource=self._mutation_snapshot.created_resource,
-            created_resource_id=self._mutation_snapshot.created_resource_id,
-            file_path=path,
-            file_existed_before=existed_before,
-            file_created_by_scope=not existed_before,
-            file_overwritten=existed_before,
-        )
-
     def commit_mutation(self, snapshot: MutationSnapshot) -> None:
         model = self._documents.get(snapshot.target_identity.document_id)
         finish = getattr(getattr(model, "Extension", None), "FinishRecordingUndoObject2", None)
@@ -333,6 +314,7 @@ class PythonComSolidWorksExecutor:
                         operation="solidworks.mutation.rollback",
                         details={"document_id": snapshot.created_resource_id},
                     )
+                self._rollback_file(snapshot)
                 return
             self.close(self._document_handles[snapshot.created_resource_id], discard=True)
             self._rollback_file(snapshot)

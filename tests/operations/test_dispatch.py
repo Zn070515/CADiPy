@@ -278,6 +278,61 @@ def test_save_path_reopen_failure_rolls_back_owned_resources() -> None:
     assert executor.calls[-3:] == ["save", "close", "reopen"]
 
 
+def test_composite_save_failure_deletes_new_scope_file(tmp_path: Path) -> None:
+    executor = FileSnapshotPersistenceFailureExecutor()
+    save_path = tmp_path / "created.SLDPRT"
+
+    with pytest.raises(TransactionError) as caught:
+        OperationDispatcher(executor).dispatch(
+            {
+                "id": "created-file-failure",
+                "operation": "part.create_rectangular_extrude",
+                "params": {
+                    "width_mm": 100.0,
+                    "height_mm": 60.0,
+                    "depth_mm": 3.0,
+                    "save_path": str(save_path),
+                },
+            }
+        )
+
+    assert caught.value.execution.rollback_status is RollbackStatus.ROLLED_BACK
+    assert not save_path.exists()
+    assert executor.rollback_snapshot is not None
+    assert executor.rollback_snapshot.file_path == save_path
+    assert executor.rollback_snapshot.file_existed_before is False
+    assert executor.rollback_snapshot.file_created_by_scope is True
+
+
+def test_composite_overwrite_failure_is_uncertain_without_file_backup(tmp_path: Path) -> None:
+    executor = FileSnapshotPersistenceFailureExecutor()
+    save_path = tmp_path / "existing.SLDPRT"
+    save_path.write_bytes(b"original")
+
+    with pytest.raises(TransactionError) as caught:
+        OperationDispatcher(executor).dispatch(
+            {
+                "id": "overwritten-file-failure",
+                "operation": "part.create_rectangular_extrude",
+                "params": {
+                    "width_mm": 100.0,
+                    "height_mm": 60.0,
+                    "depth_mm": 3.0,
+                    "save_path": str(save_path),
+                    "overwrite": True,
+                },
+            }
+        )
+
+    assert caught.value.execution.rollback_status is RollbackStatus.STATE_UNCERTAIN
+    assert save_path.read_bytes() == b"saved-by-cadipy"
+    assert executor.rollback_snapshot is not None
+    assert executor.rollback_snapshot.file_path == save_path
+    assert executor.rollback_snapshot.file_existed_before is True
+    assert executor.rollback_snapshot.file_created_by_scope is False
+    assert executor.rollback_snapshot.file_overwritten is True
+
+
 def test_document_save_defaults_to_no_overwrite_and_passes_explicit_policy() -> None:
     executor = SavePolicyExecutor()
     document = DocumentHandle("doc-a", DocumentType.PART, "PartA")
@@ -835,6 +890,45 @@ class PersistenceFailureExecutor(FakeExecutor):
     def rollback_mutation(self, snapshot: object) -> None:
         super().rollback_mutation(snapshot)
         self.owned_ids.clear()
+
+
+class FileSnapshotPersistenceFailureExecutor(PersistenceFailureExecutor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.rollback_snapshot: object | None = None
+
+    def save(
+        self,
+        document: DocumentHandle,
+        path: Path,
+        *,
+        overwrite: bool = False,
+    ) -> SaveReport:
+        self.calls.append("save")
+        if path.exists() and not overwrite:
+            raise TransactionError("test executor requires explicit overwrite")
+        path.write_bytes(b"saved-by-cadipy")
+        return SaveReport(True, path)
+
+    def reopen(self, path: Path) -> DocumentHandle:
+        self.calls.append("reopen")
+        raise TransactionError("reopen failed")
+
+    def rollback_mutation(self, snapshot: object) -> None:
+        self.rollback_snapshot = snapshot
+        super().rollback_mutation(snapshot)
+        if (
+            getattr(snapshot, "file_created_by_scope", False)
+            and (path := getattr(snapshot, "file_path", None)) is not None
+        ):
+            path.unlink(missing_ok=True)
+
+    def verify_rollback(self, snapshot: object) -> bool:
+        self.mutation_calls.append("verify_rollback")
+        if getattr(snapshot, "file_overwritten", False):
+            return False
+        path = getattr(snapshot, "file_path", None)
+        return path is None or not path.exists()
 
 
 class SavePolicyExecutor(FakeExecutor):

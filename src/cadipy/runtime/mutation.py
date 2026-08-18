@@ -41,8 +41,6 @@ class MutationCapability(Protocol):
 
     def verify_rollback(self, snapshot: MutationSnapshot) -> bool: ...
 
-    def record_created_file(self, path: Path, *, existed_before: bool) -> None: ...
-
 
 MutationAction = Callable[[], Any]
 
@@ -155,18 +153,18 @@ class MutationScope:
         if record is not None:
             record(resource_id)
 
-    def mark_file_created(self, path: Path) -> None:
+    def mark_file_created(self, path: Path, *, existed_before: bool | None = None) -> None:
         self._require_entered("mark_file_created")
-        existed_before = self.snapshot.file_existed_before
+        path = Path(path)
+        if existed_before is None:
+            existed_before = path.exists()
         self.snapshot = replace(
             self.snapshot,
             file_path=path,
+            file_existed_before=existed_before,
             file_created_by_scope=existed_before is False,
             file_overwritten=existed_before is True,
         )
-        record = getattr(self.capability, "record_created_file", None)
-        if callable(record):
-            record(path, existed_before=bool(existed_before))
 
     def rebuild(self, action: MutationAction | None = None) -> Any:
         self._require_entered("rebuild")
