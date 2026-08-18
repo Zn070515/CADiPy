@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 
 from cadipy.api import connect
+from cadipy.domain.errors import VerificationError
+from cadipy.protocol.result import OperationResult
 from cadipy.verification.postconditions import VerificationCheck, VerificationReport
 
 
@@ -30,19 +32,25 @@ def test_required_postcondition_failure_is_reported(
         )
 
     monkeypatch.setattr(dispatch_module, "verify_rectangular_extrusion", forced_failure)
-    result = solidworks_session.server.handle(
-        {
-            "protocol": 1,
-            "id": "strict-required-verification-failure",
-            "operation": "part.create_rectangular_extrude",
-            "params": {"width_mm": 100.0, "height_mm": 60.0, "depth_mm": 3.0},
-        }
-    )
+    request = {
+        "protocol": 1,
+        "id": "strict-required-verification-failure",
+        "operation": "part.create_rectangular_extrude",
+        "params": {"width_mm": 100.0, "height_mm": 60.0, "depth_mm": 3.0},
+    }
+    try:
+        solidworks_session.dispatch_request(request)
+    except VerificationError as exc:
+        result = OperationResult.failure(request["id"], request["operation"], exc)
+    else:
+        pytest.fail("forced verification failure unexpectedly returned successfully")
 
-    assert result["ok"] is False
-    assert result["error"]["code"] == "verification_failed"
-    assert result["execution"]["phase"] == "failed"
-    assert result["execution"]["rollback_status"] == "rolled_back"
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error["code"] == "verification_failed"
+    assert result.execution is not None
+    assert result.execution.phase.value == "failed"
+    assert result.execution.rollback_status.value == "rolled_back"
 
 
 @pytest.mark.solidworks

@@ -58,8 +58,10 @@ class _DiagnosticExecutor(PythonComSolidWorksExecutor):
 class _DiagnosticExecutorFactory:
     def __init__(self) -> None:
         self.operation_thread_ids: list[int] = []
+        self.executor_creation_thread_ids: list[int] = []
 
     def __call__(self) -> _DiagnosticExecutor:
+        self.executor_creation_thread_ids.append(threading.get_ident())
         return _DiagnosticExecutor(self.operation_thread_ids)
 
 
